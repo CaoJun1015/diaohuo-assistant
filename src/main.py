@@ -35,6 +35,11 @@ from src.utils.word_parser import parse_word_pricelist, preview_parse
 from src.utils.image_gen import generate_quote_image, generate_single_quote_card, WATERMARK_TEXT
 from src.utils.excel_export import export_quotes_to_excel
 from src.utils.price_diff import save_snapshot, get_latest_snapshot, diff_snapshots, get_all_snapshots
+from src.utils.follow_up import get_stale_quotes, format_reminder_text
+from src.utils.monthly_report import get_monthly_report, format_report_text
+from src.utils.shipment_flow import parse_sn_input, validate_sn_list, check_sn_duplicates, generate_shipment_receipt
+from src.utils.quote_assist import suggest_price, get_quote_history
+from src.utils.remote_diagnose import search_diagnose, get_diagnose_tree, get_all_diagnose_keys, generate_diagnose_report
 
 
 # ============================================================
@@ -67,8 +72,9 @@ class ShipmentDialog(QDialog):
         self._update_remaining()
         layout.addRow("批次剩余:", self.remaining_label)
 
-        self.sn_edit = QLineEdit()
-        self.sn_edit.setPlaceholderText("出库序列号，多台用逗号分隔（选填）")
+        self.sn_edit = QTextEdit()
+        self.sn_edit.setPlaceholderText("条码枪扫码输入，每扫一条自动换行。也可手动输入，支持逗号/空格分隔。")
+        self.sn_edit.setMaximumHeight(100)
         layout.addRow("出库SN:", self.sn_edit)
 
         self.remark_edit = QLineEdit()
@@ -79,6 +85,18 @@ class ShipmentDialog(QDialog):
         buttons.accepted.connect(self._validate_and_accept)
         buttons.rejected.connect(self.reject)
         layout.addRow(buttons)
+
+        # 条码枪支持：拦截回车键，不让它提交对话框
+        from PyQt6.QtCore import QEvent
+        self.sn_edit.installEventFilter(self)
+
+    def eventFilter(self, obj, event):
+        from PyQt6.QtCore import QEvent, Qt
+        if obj == self.sn_edit and event.type() == QEvent.Type.KeyPress:
+            if event.key() in (Qt.Key.Key_Return, Qt.Key.Key_Enter):
+                self.sn_edit.insertPlainText("\n")
+                return True
+        return super().eventFilter(obj, event)
 
     def _update_remaining(self):
         idx = self.batch_combo.currentIndex()
@@ -102,9 +120,12 @@ class ShipmentDialog(QDialog):
 
     def get_data(self):
         idx = self.batch_combo.currentIndex()
+        raw_sn = self.sn_edit.toPlainText().strip()
+        sn_list = parse_sn_input(raw_sn)
         return {
             "batch_id": self.batch_combo.currentData() if idx >= 0 else None,
-            "sn_list": self.sn_edit.text().strip(),
+            "sn_list": ",".join(sn_list),
+            "sn_count": len(sn_list),
             "remark": self.remark_edit.text().strip(),
         }
 
@@ -777,6 +798,15 @@ class QuotePanel(QWidget):
         self.product_label.setText("  ".join(parts))
         self.refresh()
 
+        # Skill 1: 加载报价建议
+        try:
+            from src.utils.quote_assist import suggest_price
+            suggestion = suggest_price(series=series, cpu=cpu, ram=ram, storage=storage, gpu=gpu)
+            if suggestion and suggestion.get("suggested_mid", 0) > 0:
+                self.quote_price_spin.setValue(suggestion["suggested_mid"])
+        except Exception:
+            pass
+
     def refresh(self):
         if not self.current_product_id:
             return
@@ -1030,10 +1060,19 @@ class MainWindow(QMainWindow):
         self.import_json_btn.clicked.connect(self.on_import_json)
         self.statement_btn = QPushButton("对账单")
         self.statement_btn.clicked.connect(self.on_statement)
+        self.follow_up_btn = QPushButton("🔔 跟单提醒")
+        self.follow_up_btn.clicked.connect(self.on_follow_up)
+        self.report_btn = QPushButton("📊 月度报告")
+        self.report_btn.clicked.connect(self.on_monthly_report)
+        self.diagnose_btn = QPushButton("🔧 远程诊断")
+        self.diagnose_btn.clicked.connect(self.on_remote_diagnose)
 
         top_bar.addWidget(QLabel("🔍"))
         top_bar.addWidget(self.search_edit)
         top_bar.addStretch()
+        top_bar.addWidget(self.follow_up_btn)
+        top_bar.addWidget(self.report_btn)
+        top_bar.addWidget(self.diagnose_btn)
         top_bar.addWidget(self.import_btn)
         top_bar.addWidget(self.broadcast_btn)
         top_bar.addWidget(self.export_btn)
@@ -2187,6 +2226,178 @@ class MainWindow(QMainWindow):
                     )
             except Exception as e:
                 pass  # 异动分析失败不影响主流程
+
+    # -------------------------------------------------------
+    # Skill 3: 智能跟单提醒
+    # -------------------------------------------------------
+    def on_follow_up(self):
+        stale = get_stale_quotes(stale_days=3)
+        text = format_reminder_text(stale)
+
+        dlg = QDialog(self)
+        dlg.setWindowTitle("🔔 跟单提醒")
+        dlg.setMinimumSize(500, 400)
+        layout = QVBoxLayout(dlg)
+
+        label = QLabel(text)
+        label.setStyleSheet("font-size: 13px; padding: 8px;")
+        label.setWordWrap(True)
+        layout.addWidget(label)
+
+        buttons = QDialogButtonBox(QDialogButtonBox.StandardButton.Ok)
+        buttons.accepted.connect(dlg.accept)
+        layout.addWidget(buttons)
+        dlg.exec()
+
+    # -------------------------------------------------------
+    # Skill 4: 月度经营报告
+    # -------------------------------------------------------
+    def on_monthly_report(self):
+        report = get_monthly_report()
+        text = format_report_text(report)
+
+        dlg = QDialog(self)
+        dlg.setWindowTitle("📊 月度经营报告")
+        dlg.setMinimumSize(550, 500)
+        layout = QVBoxLayout(dlg)
+
+        text_edit = QTextEdit()
+        text_edit.setReadOnly(True)
+        text_edit.setPlainText(text)
+        text_edit.setStyleSheet("font-size: 13px; font-family: 'Microsoft YaHei', monospace;")
+        layout.addWidget(text_edit)
+
+        buttons = QDialogButtonBox(QDialogButtonBox.StandardButton.Ok)
+        buttons.accepted.connect(dlg.accept)
+        layout.addWidget(buttons)
+        dlg.exec()
+
+    # -------------------------------------------------------
+    # Skill 6: 远程诊断助手
+    # -------------------------------------------------------
+    def on_remote_diagnose(self):
+        dlg = QDialog(self)
+        dlg.setWindowTitle("🔧 远程诊断助手")
+        dlg.setMinimumSize(650, 550)
+        layout = QVBoxLayout(dlg)
+
+        # 搜索栏
+        search_row = QHBoxLayout()
+        search_edit = QLineEdit()
+        search_edit.setPlaceholderText("输入症状关键词（如：蓝屏、开不了机、WiFi断连、风扇噪音大）")
+        search_btn = QPushButton("搜索")
+        search_row.addWidget(search_edit)
+        search_row.addWidget(search_btn)
+        layout.addLayout(search_row)
+
+        # 快捷按钮
+        quick_row = QHBoxLayout()
+        for key_info in get_all_diagnose_keys():
+            btn = QPushButton(key_info["title"])
+            btn.setStyleSheet("padding: 4px 12px;")
+            btn.clicked.connect(lambda checked, k=key_info["key"]: self._show_diagnose_steps(dlg, k))
+            quick_row.addWidget(btn)
+        quick_row.addStretch()
+        layout.addLayout(quick_row)
+
+        # 结果区域
+        result_text = QTextEdit()
+        result_text.setReadOnly(True)
+        result_text.setPlaceholderText("选择一个故障类型开始排查...")
+        result_text.setStyleSheet("font-size: 13px;")
+        layout.addWidget(result_text)
+
+        def do_search():
+            kw = search_edit.text().strip()
+            if not kw:
+                return
+            results = search_diagnose(kw)
+            if results:
+                lines = [f"找到 {len(results)} 个匹配项：\n"]
+                for r in results:
+                    lines.append(f"• {r['title']}（{r['match_type']}）")
+                lines.append("\n点击上方快捷按钮开始排查")
+                result_text.setPlainText("\n".join(lines))
+            else:
+                result_text.setPlainText(f"未找到与「{kw}」相关的诊断流程。\n\n当前支持的故障类型：\n" +
+                                         "\n".join(f"• {k['title']}" for k in get_all_diagnose_keys()))
+
+        search_btn.clicked.connect(do_search)
+        search_edit.returnPressed.connect(do_search)
+
+        buttons = QDialogButtonBox(QDialogButtonBox.StandardButton.Close)
+        buttons.rejected.connect(dlg.reject)
+        layout.addWidget(buttons)
+        dlg.exec()
+
+    def _show_diagnose_steps(self, parent_dlg, key):
+        tree = get_diagnose_tree(key)
+        if not tree:
+            return
+
+        dlg = QDialog(parent_dlg)
+        dlg.setWindowTitle(f"🔧 {tree['title']}")
+        dlg.setMinimumSize(600, 450)
+        layout = QVBoxLayout(dlg)
+
+        title = QLabel(tree["title"])
+        title.setStyleSheet("font-size: 16px; font-weight: bold; color: #1976D2; padding: 8px;")
+        layout.addWidget(title)
+
+        result_text = QTextEdit()
+        result_text.setReadOnly(True)
+        result_text.setStyleSheet("font-size: 13px;")
+        layout.addWidget(result_text)
+
+        selected_path = []
+
+        def show_step(step_idx):
+            if step_idx >= len(tree["steps"]):
+                return
+            step = tree["steps"][step_idx]
+            result_text.append(f"\n❓ {step['q']}\n")
+
+            # 清除旧按钮
+            for i in reversed(range(layout.count())):
+                item = layout.itemAt(i)
+                if item.widget() and isinstance(item.widget(), QPushButton) and item.widget().text() not in ("关闭",):
+                    item.widget().deleteLater()
+
+            for opt_name, opt_data in step["options"].items():
+                btn = QPushButton(f"→ {opt_name}")
+                btn.setStyleSheet("text-align: left; padding: 6px 12px; font-size: 13px;")
+                btn.clicked.connect(lambda checked, on=opt_name, od=opt_data, si=step_idx: handle_option(on, od, si))
+                layout.insertWidget(layout.count() - 1, btn)
+
+        def handle_option(opt_name, opt_data, step_idx):
+            selected_path.append(opt_name)
+            result_text.append(f"  ✅ {opt_name}")
+
+            if "action" in opt_data:
+                result_text.append(f"\n📋 处理方案:\n{opt_data['action']}\n")
+
+                # 生成报告按钮
+                report_btn = QPushButton("📄 生成诊断报告")
+                report_btn.setStyleSheet("background-color: #388E3C; color: white; padding: 6px 16px;")
+                report_btn.clicked.connect(lambda: self._save_diagnose_report(key, selected_path))
+                layout.insertWidget(layout.count() - 1, report_btn)
+
+            elif "next" in opt_data:
+                show_step(opt_data["next"])
+
+        show_step(0)
+
+        close_btn = QPushButton("关闭")
+        close_btn.clicked.connect(dlg.accept)
+        layout.addWidget(close_btn)
+        dlg.exec()
+
+    def _save_diagnose_report(self, key, selected_path):
+        report = generate_diagnose_report(key, selected_path)
+        # 复制到剪贴板
+        clipboard = QApplication.clipboard()
+        clipboard.setText(report)
+        QMessageBox.information(self, "诊断报告", f"报告已复制到剪贴板！\n\n{report}")
 
     # -------------------------------------------------------
     # 价格异动报告（Skill 2）
