@@ -1,6 +1,8 @@
-# 调货助手
-
 <div align="center">
+
+# 📦 调货助手
+
+**面向 IT 硬件经销商的一站式桌面管理工具**
 
 ![License](https://img.shields.io/badge/license-MIT-blue?style=flat-square)
 ![Python](https://img.shields.io/badge/python-3.10%2B-3776AB?style=flat-square&logo=python&logoColor=white)
@@ -8,33 +10,43 @@
 ![Version](https://img.shields.io/badge/version-v1.05-brightgreen?style=flat-square)
 ![GitHub](https://img.shields.io/badge/GitHub-CaoJun1015-181717?style=flat-square&logo=github&logoColor=white)
 
+从上游价格表解析、报价、出库、收款到对账，一站式管理你的调货生意。
+
+[功能介绍](#功能) · [快速开始](#快速开始) · [智能技能](#智能技能skills) · [项目结构](#项目结构) · [更新日志](#版本历史)
+
 </div>
 
-面向 IT 硬件经销商的桌面管理工具。从上游价格表解析、报价、出库、收款到对账，一站式管理你的调货生意。
+---
 
 ## 功能
 
-- **机型管理** — 从上游 Word 价格表自动导入机型配置，支持联想、拯救者、小新、ThinkPad 等系列
-- **库存批次** — 按批次管理进货，记录购入价、数量、上游供应商、SN 序列号
-- **报价操作** — 选机型 → 选批次 → 输入报价 → 一键复制文本或生成报价图片
-- **出库管理** — 选择批次扣减库存，录入 SN，支持条码枪扫描输入
-- **客户管理** — 客户联系方式 + 购买历史 + 欠款跟踪
-- **上游管理** — 供应商联系方式 + 采购历史
-- **账款管理** — 应收/应付一目了然，支持 FIFO 自动分配收款
-- **客户对账单** — 按客户 + 日期范围生成对账单，导出 Excel
-- **报价记录** — 全流程状态追踪：待确认 → 已报价 → 已出库 → 已收款
-- **数据备份** — 自动备份数据库，支持 JSON 格式全量导入导出
+| 模块 | 说明 |
+|------|------|
+| 📋 机型管理 | 从上游 Word 价格表自动导入，支持联想、拯救者、小新、ThinkPad 等系列 |
+| 📦 库存批次 | 按批次管理进货，记录购入价、数量、上游供应商、SN 序列号 |
+| 💰 报价操作 | 选机型 → 选批次 → 输入报价 → 一键复制文本或生成报价图片 |
+| 🚚 出库管理 | 选择批次扣减库存，录入 SN，支持条码枪扫描输入 |
+| 👤 客户管理 | 客户联系方式 + 购买历史 + 欠款跟踪 |
+| 🏭 上游管理 | 供应商联系方式 + 采购历史 |
+| 💳 账款管理 | 应收/应付一目了然，支持 FIFO 自动分配收款 |
+| 📊 客户对账单 | 按客户 + 日期范围生成对账单，导出 Excel |
+| 📝 报价记录 | 全流程状态追踪：待确认 → 已报价 → 已出库 → 已收款 |
+| 💾 数据备份 | 自动备份数据库，支持 JSON 格式全量导入导出 |
 
 ### 智能技能（Skills）
 
-- **报价决策助手** — 基于历史报价数据自动推荐报价金额
-- **价格异动哨兵** — 导入价格表时自动对比上一版本，检测新增/下架机型
-- **智能跟单提醒** — 扫描超期未成交订单，提醒跟进
-- **月度经营报告** — 自动生成销售额/毛利/TOP5/滞销预警/回款率分析
-- **出库一条龙** — SN 批量扫描/校验/去重 + 出库确认单生成
-- **远程诊断助手** — 结构化故障排查决策树（蓝屏/开不了机/WiFi/风扇）
+内置 6 个专属 IT 经销商的智能技能，详见 [docs/skills.md](docs/skills.md)。
 
-> 详细使用说明见 [docs/skills.md](docs/skills.md)
+| Skill | 解决什么问题 |
+|-------|-------------|
+| 🧠 报价决策助手 | 基于历史报价数据自动推荐报价金额 |
+| 🔔 价格异动哨兵 | 导入价格表时自动对比上一版本，检测新增/下架机型 |
+| ⏰ 智能跟单提醒 | 扫描超期未成交订单，提醒跟进 |
+| 📈 月度经营报告 | 自动生成销售额/毛利/TOP5/滞销预警/回款率分析 |
+| 🔧 出库一条龙 | SN 批量扫描/校验/去重 + 出库确认单生成 |
+| 🩺 远程诊断助手 | 结构化故障排查决策树（蓝屏/开不了机/WiFi/风扇） |
+
+---
 
 ## 快速开始
 
@@ -43,17 +55,17 @@
 - Python 3.10+
 - Windows 10/11
 
-### 安装
+### 安装与运行
 
 ```bash
-git clone https://github.com/你的用户名/diaohuo-assistant.git
+# 克隆仓库
+git clone https://github.com/CaoJun1015/diaohuo-assistant.git
 cd diaohuo-assistant
+
+# 安装依赖
 pip install -r requirements.txt
-```
 
-### 运行
-
-```bash
+# 启动
 python run.py
 ```
 
@@ -64,6 +76,8 @@ python build_exe.py
 ```
 
 打包后的 exe 文件在 `dist/` 目录下。
+
+---
 
 ## 项目结构
 
@@ -82,30 +96,53 @@ diaohuo-assistant/
 │       ├── word_parser.py  # Word 价格表解析
 │       ├── image_gen.py    # 报价图片生成
 │       ├── excel_export.py # Excel 导出
-│       └── json_export.py  # JSON 导入导出
+│       ├── json_export.py  # JSON 导入导出
+│       └── skills/         # 智能技能模块
+│           ├── price_diff.py
+│           ├── follow_up.py
+│           ├── monthly_report.py
+│           ├── shipment_flow.py
+│           ├── quote_assist.py
+│           └── remote_diagnose.py
 │
 ├── data/                   # 数据目录（数据库不提交到 git）
-└── docs/                   # 文档
+├── docs/                   # 文档
+└── skills/                 # TRAE SOLO Skill
+    └── it-remote-diagnose/ # 远程诊断助手（可独立使用）
 ```
+
+---
 
 ## 依赖
 
 | 包 | 用途 |
 |----|------|
-| PyQt6 | 桌面 GUI 框架 |
-| python-docx | 读取 Word 价格表 |
-| Pillow | 生成报价图片 |
-| openpyxl | 导出 Excel 报表 |
+| `PyQt6` | 桌面 GUI 框架 |
+| `python-docx` | 读取 Word 价格表 |
+| `Pillow` | 生成报价图片 |
+| `openpyxl` | 导出 Excel 报表 |
+
+---
 
 ## 版本历史
 
-- **v1.05** — 当前版本，详见 [CHANGELOG.md](CHANGELOG.md)
-- **v1.04** — 批量报价图片、群发功能
-- **v1.03** — 自动备份、操作日志、客户购买历史、JSON 备份
-- **v1.02** — 报价数量支持、实时库存管理
-- **v1.01** — 备注列显示、Word 解析修复
-- **v1.0** — 初始版本
+| 版本 | 日期 | 主要更新 |
+|------|------|---------|
+| v1.05 | 2026-05 | 智能技能系统（6 个 Skill）、条码枪支持、价格异动哨兵 |
+| v1.04 | 2026-05 | 批量报价图片、群发功能 |
+| v1.03 | 2026-05 | 自动备份、操作日志、客户购买历史、JSON 备份 |
+| v1.02 | 2026-05 | 报价数量支持、实时库存管理 |
+| v1.01 | 2026-05 | 备注列显示、Word 解析修复 |
+| v1.0 | 2026-05 | 初始版本 |
 
-## 许可证
+完整更新日志见 [CHANGELOG.md](CHANGELOG.md)
 
-[MIT License](LICENSE)
+---
+
+<div align="center">
+
+**如果这个项目对你有帮助，欢迎点个 ⭐ Star 支持一下！**
+
+[MIT License](LICENSE) · [报告问题](https://github.com/CaoJun1015/diaohuo-assistant/issues)
+
+</div>
