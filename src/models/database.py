@@ -1,0 +1,737 @@
+"""
+数据库模型定义：机型、批次库存、客户、报价记录
+"""
+
+import sqlite3
+import os
+import sys
+import shutil
+from datetime import datetime
+
+BACKUP_DIR = os.path.join(os.path.dirname(os.path.abspath(__file__)), "..", "..", "data", "backup")
+MAX_BACKUPS = 7
+
+def get_app_path():
+    if getattr(sys, 'frozen', False):
+        return os.path.dirname(sys.executable)
+    return os.path.dirname(os.path.dirname(os.path.dirname(__file__)))
+
+APP_DATA_DIR = os.path.join(get_app_path(), "data")
+DB_PATH = os.path.join(APP_DATA_DIR, "diaohuo.db")
+
+
+def get_connection():
+    os.makedirs(APP_DATA_DIR, exist_ok=True)
+    conn = sqlite3.connect(DB_PATH)
+    conn.row_factory = sqlite3.Row
+    conn.execute("PRAGMA journal_mode=WAL")
+    conn.execute("PRAGMA foreign_keys=ON")
+    return conn
+
+
+def backup_database():
+    """自动备份数据库，保留最近MAX_BACKUPS个备份"""
+    try:
+        os.makedirs(BACKUP_DIR, exist_ok=True)
+        
+        if not os.path.exists(DB_PATH):
+            return True, "数据库文件不存在，跳过备份"
+        
+        timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+        backup_path = os.path.join(BACKUP_DIR, f"diaohuo_backup_{timestamp}.db")
+        
+        shutil.copy2(DB_PATH, backup_path)
+        
+        backups = sorted([f for f in os.listdir(BACKUP_DIR) if f.startswith("diaohuo_backup_")], reverse=True)
+        if len(backups) > MAX_BACKUPS:
+            for old_backup in backups[MAX_BACKUPS:]:
+                os.remove(os.path.join(BACKUP_DIR, old_backup))
+        
+        return True, f"备份成功: {os.path.basename(backup_path)}"
+    except Exception as e:
+        return False, f"备份失败: {str(e)}"
+
+
+def init_db():
+    conn = get_connection()
+    cursor = conn.cursor()
+
+    cursor.executescript("""
+        CREATE TABLE IF NOT EXISTS products (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            series TEXT NOT NULL,          -- 系列，如 Y7000P、小新Pro16
+            cpu TEXT,                      -- CPU 型号
+            ram TEXT,                      -- 内存
+            storage TEXT,                  -- 硬盘
+            gpu TEXT,                      -- 显卡
+            screen TEXT,                   -- 屏幕尺寸
+            note TEXT,                     -- 备注（颜色、新品等）
+            created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+        );
+
+        CREATE TABLE IF NOT EXISTS batches (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            product_id INTEGER NOT NULL,
+            purchase_price REAL NOT NULL,  -- 购入价
+            quantity INTEGER NOT NULL,     -- 进货数量
+            remaining INTEGER NOT NULL,    -- 剩余数量
+            date TEXT NOT NULL,            -- 入库日期 YYYY-MM-DD
+            remark TEXT,                   -- 备注（含税/未税等）
+            created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+            FOREIGN KEY (product_id) REFERENCES products(id) ON DELETE CASCADE
+        );
+
+        CREATE TABLE IF NOT EXISTS customers (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            name TEXT NOT NULL,
+            wechat TEXT,
+            qq TEXT,
+            phone TEXT,
+            note TEXT,
+            created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+        );
+
+        CREATE TABLE IF NOT EXISTS suppliers (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            name TEXT NOT NULL,
+            wechat TEXT,
+            qq TEXT,
+            phone TEXT,
+            note TEXT,
+            created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+        );
+
+        CREATE TABLE IF NOT EXISTS quotes (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            batch_id INTEGER NOT NULL,
+            customer_id INTEGER,
+            quote_price REAL NOT NULL,      -- 对外报价
+            quote_quantity INTEGER NOT NULL DEFAULT 1,  -- 报价数量
+            quote_date TEXT NOT NULL,       -- 报价日期 YYYY-MM-DD
+            remark TEXT,                    -- 备注
+            paid TEXT,                      -- 是否打款（是/否）
+            status TEXT DEFAULT '待确认',   -- 状态：待确认/已报价/已出库/已收款/已取消
+            received_amount REAL DEFAULT 0, -- 已收金额
+            created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+            FOREIGN KEY (batch_id) REFERENCES batches(id),
+            FOREIGN KEY (customer_id) REFERENCES customers(id)
+        );
+
+        CREATE TABLE IF NOT EXISTS payments (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            quote_id INTEGER,
+            customer_id INTEGER,
+            supplier_id INTEGER,
+            type TEXT NOT NULL,             -- 'receivable' 收款 / 'payable' 付款
+            amount REAL NOT NULL,
+            pay_date TEXT,
+            method TEXT,                    -- 现金/转账/微信/支付宝
+            remark TEXT,
+            created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+            FOREIGN KEY (quote_id) REFERENCES quotes(id),
+            FOREIGN KEY (customer_id) REFERENCES customers(id),
+            FOREIGN KEY (supplier_id) REFERENCES suppliers(id)
+        );
+    """)
+    
+    cursor.execute("PRAGMA table_info(quotes)")
+    columns = [col[1] for col in cursor.fetchall()]
+    if "paid" not in columns:
+        try:
+            cursor.execute("ALTER TABLE quotes ADD COLUMN paid TEXT")
+            cursor.execute("UPDATE quotes SET paid='否' WHERE paid IS NULL")
+        except:
+            pass
+    
+    if "quote_quantity" not in columns:
+        try:
+            cursor.execute("ALTER TABLE quotes ADD COLUMN quote_quantity INTEGER DEFAULT 1")
+            cursor.execute("UPDATE quotes SET quote_quantity=1 WHERE quote_quantity IS NULL")
+        except:
+            pass
+    
+    cursor.execute("PRAGMA table_info(batches)")
+    batch_columns = [col[1] for col in cursor.fetchall()]
+    if "remark" not in batch_columns:
+        try:
+            cursor.execute("ALTER TABLE batches ADD COLUMN remark TEXT")
+        except:
+            pass
+
+    if "supplier_id" not in batch_columns:
+        try:
+            cursor.execute("ALTER TABLE batches ADD COLUMN supplier_id INTEGER REFERENCES suppliers(id)")
+        except:
+            pass
+
+    if "sn_list" not in batch_columns:
+        try:
+            cursor.execute("ALTER TABLE batches ADD COLUMN sn_list TEXT")
+        except:
+            pass
+
+    if "status" not in columns:
+        try:
+            cursor.execute("ALTER TABLE quotes ADD COLUMN status TEXT DEFAULT '待确认'")
+            cursor.execute("UPDATE quotes SET status='待确认' WHERE status IS NULL")
+        except:
+            pass
+
+    if "received_amount" not in columns:
+        try:
+            cursor.execute("ALTER TABLE quotes ADD COLUMN received_amount REAL DEFAULT 0")
+        except:
+            pass
+
+    if "sn_list" not in columns:
+        try:
+            cursor.execute("ALTER TABLE quotes ADD COLUMN sn_list TEXT")
+        except:
+            pass
+
+    cursor.execute("PRAGMA table_info(customers)")
+    customer_cols = [col[1] for col in cursor.fetchall()]
+    if "balance" not in customer_cols:
+        try:
+            cursor.execute("ALTER TABLE customers ADD COLUMN balance REAL DEFAULT 0")
+        except:
+            pass
+
+    cursor.execute("PRAGMA table_info(suppliers)")
+    supplier_cols = [col[1] for col in cursor.fetchall()]
+    if "balance" not in supplier_cols:
+        try:
+            cursor.execute("ALTER TABLE suppliers ADD COLUMN balance REAL DEFAULT 0")
+        except:
+            pass
+    
+    try:
+        cursor.execute("""
+            CREATE TABLE IF NOT EXISTS operation_logs (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                operation TEXT NOT NULL,
+                table_name TEXT NOT NULL,
+                record_id INTEGER,
+                description TEXT,
+                created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+            )
+        """)
+    except:
+        pass
+    
+    try:
+        cursor.execute("CREATE INDEX IF NOT EXISTS idx_products_series ON products(series)")
+        cursor.execute("CREATE INDEX IF NOT EXISTS idx_quotes_date ON quotes(quote_date)")
+        cursor.execute("CREATE INDEX IF NOT EXISTS idx_quotes_customer ON quotes(customer_id)")
+        cursor.execute("CREATE INDEX IF NOT EXISTS idx_logs_time ON operation_logs(created_at)")
+    except:
+        pass
+    
+    conn.commit()
+    conn.close()
+
+
+# ---------- 机型管理 ----------
+
+def add_product(series, cpu="", ram="", storage="", gpu="", screen="", note=""):
+    conn = get_connection()
+    conn.execute(
+        "INSERT INTO products (series, cpu, ram, storage, gpu, screen, note) VALUES (?,?,?,?,?,?,?)",
+        (series, cpu, ram, storage, gpu, screen, note),
+    )
+    conn.commit()
+    pid = conn.execute("SELECT last_insert_rowid()").fetchone()[0]
+    conn.close()
+    return pid
+
+
+def update_product(pid, series, cpu, ram, storage, gpu, screen, note):
+    conn = get_connection()
+    conn.execute(
+        "UPDATE products SET series=?, cpu=?, ram=?, storage=?, gpu=?, screen=?, note=? WHERE id=?",
+        (series, cpu, ram, storage, gpu, screen, note, pid),
+    )
+    conn.commit()
+    conn.close()
+
+
+def delete_product(pid):
+    conn = get_connection()
+    conn.execute("PRAGMA foreign_keys = OFF")
+    conn.execute("DELETE FROM payments WHERE quote_id IN (SELECT id FROM quotes WHERE batch_id IN (SELECT id FROM batches WHERE product_id=?))", (pid,))
+    conn.execute("DELETE FROM quotes WHERE batch_id IN (SELECT id FROM batches WHERE product_id=?)", (pid,))
+    conn.execute("DELETE FROM batches WHERE product_id=?", (pid,))
+    conn.execute("DELETE FROM products WHERE id=?", (pid,))
+    conn.execute("PRAGMA foreign_keys = ON")
+    conn.commit()
+    conn.close()
+
+
+def search_products(keyword):
+    conn = get_connection()
+    kw = f"%{keyword}%"
+    rows = conn.execute(
+        """SELECT id, series, cpu, ram, storage, gpu, screen, note
+           FROM products
+           WHERE series LIKE ? OR cpu LIKE ? OR note LIKE ?
+           ORDER BY series, cpu""",
+        (kw, kw, kw),
+    ).fetchall()
+    conn.close()
+    return [dict(r) for r in rows]
+
+
+def get_all_products():
+    conn = get_connection()
+    rows = conn.execute(
+        "SELECT id, series, cpu, ram, storage, gpu, screen, note FROM products ORDER BY series, cpu"
+    ).fetchall()
+    conn.close()
+    return [dict(r) for r in rows]
+
+
+# ---------- 批次库存管理 ----------
+
+def add_batch(product_id, purchase_price, quantity, remaining, date_str, remark="", supplier_id=None, sn_list=""):
+    conn = get_connection()
+    conn.execute(
+        "INSERT INTO batches (product_id, purchase_price, quantity, remaining, date, remark, supplier_id, sn_list) VALUES (?,?,?,?,?,?,?,?)",
+        (product_id, purchase_price, quantity, remaining, date_str, remark, supplier_id, sn_list),
+    )
+    if supplier_id:
+        conn.execute(
+            "UPDATE suppliers SET balance = COALESCE(balance, 0) + ? WHERE id=?",
+            (purchase_price * quantity, supplier_id),
+        )
+    conn.commit()
+    bid = conn.execute("SELECT last_insert_rowid()").fetchone()[0]
+    conn.close()
+    return bid
+
+
+def get_batches(product_id):
+    conn = get_connection()
+    rows = conn.execute(
+        "SELECT id, product_id, purchase_price, quantity, remaining, date, remark, supplier_id, sn_list FROM batches WHERE product_id=? ORDER BY date DESC, id DESC",
+        (product_id,),
+    ).fetchall()
+    conn.close()
+    return [dict(r) for r in rows]
+
+
+def update_batch_remaining(batch_id, new_remaining):
+    conn = get_connection()
+    conn.execute("UPDATE batches SET remaining=? WHERE id=?", (new_remaining, batch_id))
+    conn.commit()
+    conn.close()
+
+
+def deduct_batch_remaining(batch_id, quantity):
+    """扣减批次库存，返回是否成功"""
+    conn = get_connection()
+    cursor = conn.cursor()
+    
+    cursor.execute("SELECT remaining FROM batches WHERE id=?", (batch_id,))
+    row = cursor.fetchone()
+    if not row:
+        conn.close()
+        return False, "批次不存在"
+    
+    current_remaining = row[0]
+    if current_remaining < quantity:
+        conn.close()
+        return False, f"库存不足！当前剩余 {current_remaining} 台，报价 {quantity} 台"
+    
+    new_remaining = current_remaining - quantity
+    conn.execute("UPDATE batches SET remaining=? WHERE id=?", (new_remaining, batch_id))
+    conn.commit()
+    conn.close()
+    return True, f"扣减成功，剩余 {new_remaining} 台"
+
+
+def get_batch_remaining(batch_id):
+    """获取指定批次的剩余库存"""
+    conn = get_connection()
+    cursor = conn.execute("SELECT remaining FROM batches WHERE id=?", (batch_id,))
+    row = cursor.fetchone()
+    conn.close()
+    return row[0] if row else 0
+
+
+def delete_batch(batch_id):
+    conn = get_connection()
+    conn.execute("PRAGMA foreign_keys = OFF")
+    conn.execute("DELETE FROM payments WHERE quote_id IN (SELECT id FROM quotes WHERE batch_id=?)", (batch_id,))
+    conn.execute("DELETE FROM quotes WHERE batch_id=?", (batch_id,))
+    conn.execute("DELETE FROM batches WHERE id=?", (batch_id,))
+    conn.execute("PRAGMA foreign_keys = ON")
+    conn.commit()
+    conn.close()
+
+
+def get_total_remaining(product_id):
+    conn = get_connection()
+    row = conn.execute(
+        "SELECT COALESCE(SUM(remaining),0) FROM batches WHERE product_id=?", (product_id,)
+    ).fetchone()[0]
+    conn.close()
+    return row
+
+
+# ---------- 客户管理 ----------
+
+def add_customer(name, wechat="", qq="", phone="", note=""):
+    conn = get_connection()
+    conn.execute(
+        "INSERT INTO customers (name, wechat, qq, phone, note) VALUES (?,?,?,?,?)",
+        (name, wechat, qq, phone, note),
+    )
+    conn.commit()
+    cid = conn.execute("SELECT last_insert_rowid()").fetchone()[0]
+    conn.close()
+    return cid
+
+
+def search_customers(keyword):
+    conn = get_connection()
+    kw = f"%{keyword}%"
+    rows = conn.execute(
+        "SELECT id, name, wechat, qq, phone, note FROM customers WHERE name LIKE ? ORDER BY name",
+        (kw,),
+    ).fetchall()
+    conn.close()
+    return [dict(r) for r in rows]
+
+
+def get_all_customers():
+    conn = get_connection()
+    rows = conn.execute(
+        "SELECT id, name, wechat, qq, phone, note FROM customers ORDER BY name"
+    ).fetchall()
+    conn.close()
+    return [dict(r) for r in rows]
+
+
+# ---------- 上游管理 ----------
+
+def add_supplier(name, wechat="", qq="", phone="", note=""):
+    conn = get_connection()
+    conn.execute(
+        "INSERT INTO suppliers (name, wechat, qq, phone, note) VALUES (?,?,?,?,?)",
+        (name, wechat, qq, phone, note),
+    )
+    conn.commit()
+    sid = conn.execute("SELECT last_insert_rowid()").fetchone()[0]
+    conn.close()
+    return sid
+
+
+def search_suppliers(keyword):
+    conn = get_connection()
+    kw = f"%{keyword}%"
+    rows = conn.execute(
+        "SELECT id, name, wechat, qq, phone, note FROM suppliers WHERE name LIKE ? ORDER BY name",
+        (kw,),
+    ).fetchall()
+    conn.close()
+    return [dict(r) for r in rows]
+
+
+def get_all_suppliers():
+    conn = get_connection()
+    rows = conn.execute(
+        "SELECT id, name, wechat, qq, phone, note FROM suppliers ORDER BY name"
+    ).fetchall()
+    conn.close()
+    return [dict(r) for r in rows]
+
+
+def delete_customer_cascade(customer_id):
+    """级联删除客户及其关联的付款记录、报价记录。返回受影响记录数。"""
+    conn = get_connection()
+    conn.execute("PRAGMA foreign_keys = OFF")
+    quote_count = conn.execute("SELECT COUNT(*) FROM quotes WHERE customer_id=?", (customer_id,)).fetchone()[0]
+    payment_count = conn.execute("SELECT COUNT(*) FROM payments WHERE customer_id=?", (customer_id,)).fetchone()[0]
+    conn.execute("DELETE FROM payments WHERE customer_id=?", (customer_id,))
+    conn.execute("DELETE FROM payments WHERE quote_id IN (SELECT id FROM quotes WHERE customer_id=?)", (customer_id,))
+    conn.execute("DELETE FROM quotes WHERE customer_id=?", (customer_id,))
+    conn.execute("DELETE FROM customers WHERE id=?", (customer_id,))
+    conn.execute("PRAGMA foreign_keys = ON")
+    conn.commit()
+    conn.close()
+    return {"quotes": quote_count, "payments": payment_count}
+
+
+def delete_supplier_cascade(supplier_id):
+    """级联删除上游及其关联的付款记录。批次的上游字段设为NULL。返回受影响记录数。"""
+    conn = get_connection()
+    conn.execute("PRAGMA foreign_keys = OFF")
+    batch_count = conn.execute("SELECT COUNT(*) FROM batches WHERE supplier_id=?", (supplier_id,)).fetchone()[0]
+    payment_count = conn.execute("SELECT COUNT(*) FROM payments WHERE supplier_id=?", (supplier_id,)).fetchone()[0]
+    conn.execute("DELETE FROM payments WHERE supplier_id=?", (supplier_id,))
+    conn.execute("UPDATE batches SET supplier_id=NULL WHERE supplier_id=?", (supplier_id,))
+    conn.execute("DELETE FROM suppliers WHERE id=?", (supplier_id,))
+    conn.execute("PRAGMA foreign_keys = ON")
+    conn.commit()
+    conn.close()
+    return {"batches": batch_count, "payments": payment_count}
+
+
+# ---------- 报价记录 ----------
+
+def add_quote(batch_id, customer_id, quote_price, quote_quantity, quote_date, remark="", paid="", status="待确认", received_amount=0, sn_list=""):
+    conn = get_connection()
+    conn.execute(
+        "INSERT INTO quotes (batch_id, customer_id, quote_price, quote_quantity, quote_date, remark, paid, status, received_amount, sn_list) VALUES (?,?,?,?,?,?,?,?,?,?)",
+        (batch_id, customer_id, quote_price, quote_quantity, quote_date, remark, paid, status, received_amount, sn_list),
+    )
+    conn.commit()
+    conn.close()
+
+
+def update_quote(quote_id, batch_id, customer_id, quote_price, quote_quantity, quote_date, remark, paid, sn_list=""):
+    conn = get_connection()
+    conn.execute(
+        "UPDATE quotes SET batch_id=?, customer_id=?, quote_price=?, quote_quantity=?, quote_date=?, remark=?, paid=?, sn_list=? WHERE id=?",
+        (batch_id, customer_id, quote_price, quote_quantity, quote_date, remark, paid, sn_list, quote_id),
+    )
+    conn.commit()
+    conn.close()
+
+
+def delete_quote(quote_id):
+    conn = get_connection()
+    conn.execute("PRAGMA foreign_keys = OFF")
+    conn.execute("DELETE FROM payments WHERE quote_id=?", (quote_id,))
+    conn.execute("DELETE FROM quotes WHERE id=?", (quote_id,))
+    conn.execute("PRAGMA foreign_keys = ON")
+    conn.commit()
+    conn.close()
+
+
+def get_quote_by_id(quote_id):
+    conn = get_connection()
+    row = conn.execute(
+        "SELECT q.id, q.batch_id, q.customer_id, q.quote_price, q.quote_quantity, q.quote_date, q.remark, q.paid, q.status, q.received_amount, q.sn_list, "
+        "p.series, p.cpu, p.ram, p.storage, p.gpu, "
+        "b.purchase_price, b.sn_list as batch_sn_list, "
+        "c.name as customer_name "
+        "FROM quotes q "
+        "JOIN batches b ON q.batch_id = b.id "
+        "JOIN products p ON b.product_id = p.id "
+        "LEFT JOIN customers c ON q.customer_id = c.id "
+        "WHERE q.id=?",
+        (quote_id,),
+    ).fetchone()
+    conn.close()
+    return dict(row) if row else None
+
+
+def search_quotes(keyword="", date_from="", date_to="", customer_id=None):
+    conn = get_connection()
+    conditions = []
+    params = []
+
+    if keyword:
+        kw = f"%{keyword}%"
+        conditions.append("(p.series LIKE ? OR p.cpu LIKE ? OR p.ram LIKE ? OR p.storage LIKE ? OR p.gpu LIKE ? OR c.name LIKE ? OR b.remark LIKE ? OR q.remark LIKE ? OR b.sn_list LIKE ? OR s.name LIKE ?)")
+        params.extend([kw] * 10)
+    if date_from:
+        conditions.append("q.quote_date >= ?")
+        params.append(date_from)
+    if date_to:
+        conditions.append("q.quote_date <= ?")
+        params.append(date_to)
+    if customer_id:
+        conditions.append("q.customer_id = ?")
+        params.append(customer_id)
+
+    where = " AND ".join(conditions) if conditions else "1=1"
+    sql = f"""
+        SELECT q.id, q.quote_price, q.quote_quantity, q.quote_date, q.remark, q.paid, q.status, q.received_amount, q.sn_list,
+               p.series, p.cpu, p.ram, p.storage, p.gpu, p.screen, p.note,
+               b.purchase_price, b.remark as batch_remark, b.id as batch_id, b.sn_list as batch_sn_list,
+               c.name as customer_name, c.id as customer_id,
+               s.name as supplier_name
+        FROM quotes q
+        JOIN batches b ON q.batch_id = b.id
+        JOIN products p ON b.product_id = p.id
+        LEFT JOIN customers c ON q.customer_id = c.id
+        LEFT JOIN suppliers s ON b.supplier_id = s.id
+        WHERE {where}
+        ORDER BY q.quote_date DESC, q.id DESC
+    """
+    rows = conn.execute(sql, params).fetchall()
+    conn.close()
+    return [dict(r) for r in rows]
+
+
+def export_quotes(date_from="", date_to="", customer_id=None):
+    """导出的数据包含完整财务信息"""
+    return search_quotes("", date_from, date_to, customer_id)
+
+
+def update_quote_status(quote_id, new_status):
+    conn = get_connection()
+    conn.execute("UPDATE quotes SET status=? WHERE id=?", (new_status, quote_id))
+    conn.commit()
+    conn.close()
+
+
+def add_payment(quote_id=None, customer_id=None, supplier_id=None, pay_type="receivable",
+                amount=0, pay_date="", method="", remark=""):
+    conn = get_connection()
+    conn.execute(
+        "INSERT INTO payments (quote_id, customer_id, supplier_id, type, amount, pay_date, method, remark) "
+        "VALUES (?,?,?,?,?,?,?,?)",
+        (quote_id, customer_id, supplier_id, pay_type, amount, pay_date, method, remark),
+    )
+    if quote_id and pay_type == "receivable":
+        conn.execute(
+            "UPDATE quotes SET received_amount = received_amount + ?, paid = CASE WHEN received_amount >= quote_price * quote_quantity THEN '是' ELSE '否' END WHERE id=?",
+            (amount, quote_id),
+        )
+        row = conn.execute(
+            "SELECT received_amount, quote_price, quote_quantity FROM quotes WHERE id=?", (quote_id,)
+        ).fetchone()
+        if row and row[0] >= (row[1] * row[2]):
+            conn.execute("UPDATE quotes SET status='已收款' WHERE id=?", (quote_id,))
+    if pay_type == "payable" and supplier_id:
+        conn.execute(
+            "UPDATE suppliers SET balance = balance - ? WHERE id=?", (amount, supplier_id)
+        )
+    conn.commit()
+    conn.close()
+
+
+def get_payments(quote_id=None, customer_id=None, supplier_id=None):
+    conn = get_connection()
+    conditions = []
+    params = []
+    if quote_id:
+        conditions.append("p.quote_id = ?")
+        params.append(quote_id)
+    if customer_id:
+        conditions.append("p.customer_id = ?")
+        params.append(customer_id)
+    if supplier_id:
+        conditions.append("p.supplier_id = ?")
+        params.append(supplier_id)
+    where = " AND ".join(conditions) if conditions else "1=1"
+    sql = f"SELECT * FROM payments p WHERE {where} ORDER BY p.pay_date DESC, p.id DESC"
+    rows = conn.execute(sql, params).fetchall()
+    conn.close()
+    return [dict(r) for r in rows]
+
+
+def get_customer_balance(customer_id=None):
+    conn = get_connection()
+    if customer_id:
+        row = conn.execute(
+            "SELECT COALESCE(SUM(q.quote_price * q.quote_quantity - q.received_amount), 0) "
+            "FROM quotes q WHERE q.customer_id = ? AND q.status IN ('已报价','已出库')",
+            (customer_id,),
+        ).fetchone()
+    else:
+        row = conn.execute(
+            "SELECT COALESCE(SUM(q.quote_price * q.quote_quantity - q.received_amount), 0) "
+            "FROM quotes q WHERE q.status IN ('已报价','已出库')",
+        ).fetchone()
+    conn.close()
+    return row[0] if row else 0
+
+
+def get_supplier_payable(supplier_id=None):
+    conn = get_connection()
+    if supplier_id:
+        row = conn.execute("SELECT COALESCE(balance, 0) FROM suppliers WHERE id=?", (supplier_id,)).fetchone()
+    else:
+        row = conn.execute("SELECT COALESCE(SUM(balance), 0) FROM suppliers").fetchone()
+    conn.close()
+    return row[0] if row else 0
+
+
+def get_customer_statement(customer_id, date_from="", date_to=""):
+    conn = get_connection()
+    conditions = ["q.customer_id = ?"]
+    params = [customer_id]
+    if date_from:
+        conditions.append("q.quote_date >= ?")
+        params.append(date_from)
+    if date_to:
+        conditions.append("q.quote_date <= ?")
+        params.append(date_to)
+    where = " AND ".join(conditions)
+    sql = f"""
+        SELECT q.id, q.quote_date, q.quote_price, q.quote_quantity, q.status, q.paid, q.received_amount,
+               p.series, p.cpu, p.ram, p.storage, p.gpu,
+               b.purchase_price, b.remark as batch_remark, q.remark,
+               s.name as supplier_name
+        FROM quotes q
+        JOIN batches b ON q.batch_id = b.id
+        JOIN products p ON b.product_id = p.id
+        LEFT JOIN suppliers s ON b.supplier_id = s.id
+        WHERE {where}
+        ORDER BY q.quote_date, q.id
+    """
+    rows = conn.execute(sql, params).fetchall()
+    conn.close()
+    return [dict(r) for r in rows]
+
+
+def add_operation_log(operation, table_name, record_id, description=""):
+    """记录操作日志"""
+    conn = get_connection()
+    conn.execute(
+        "INSERT INTO operation_logs (operation, table_name, record_id, description) VALUES (?,?,?,?)",
+        (operation, table_name, record_id, description),
+    )
+    conn.commit()
+    conn.close()
+
+
+def get_operation_logs(limit=100):
+    """获取最近的操作日志"""
+    conn = get_connection()
+    rows = conn.execute(
+        "SELECT * FROM operation_logs ORDER BY created_at DESC LIMIT ?",
+        (limit,),
+    ).fetchall()
+    conn.close()
+    return [dict(r) for r in rows]
+
+
+def get_customer_quotes(customer_id):
+    """获取客户的所有报价记录（购买历史）"""
+    conn = get_connection()
+    sql = """
+        SELECT q.id, q.quote_price, q.quote_quantity, q.quote_date, q.remark, q.paid,
+               p.series, p.cpu, p.ram, p.storage, p.gpu, p.screen, p.note,
+               b.purchase_price
+        FROM quotes q
+        JOIN batches b ON q.batch_id = b.id
+        JOIN products p ON b.product_id = p.id
+        WHERE q.customer_id = ?
+        ORDER BY q.quote_date DESC, q.id DESC
+    """
+    rows = conn.execute(sql, (customer_id,)).fetchall()
+    conn.close()
+    return [dict(r) for r in rows]
+
+
+def get_customer_stats(customer_id):
+    """获取客户统计信息"""
+    conn = get_connection()
+    row = conn.execute(
+        """
+        SELECT COUNT(*) as total_quotes, 
+               SUM(q.quote_price * q.quote_quantity) as total_amount,
+               SUM((q.quote_price - b.purchase_price) * q.quote_quantity) as total_profit
+        FROM quotes q
+        JOIN batches b ON q.batch_id = b.id
+        WHERE q.customer_id = ?
+        """,
+        (customer_id,),
+    ).fetchone()
+    conn.close()
+    return dict(row) if row else {"total_quotes": 0, "total_amount": 0, "total_profit": 0}

@@ -1,0 +1,49 @@
+# Python
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+*.egg-info/
+dist/
+build/
+*.spec
+!build.spec
+
+# 虚拟环境
+venv/
+.venv/
+env/
+
+# IDE
+.vscode/
+.idea/
+*.swp
+*.swo
+
+# 数据库（含敏感业务数据）
+data/diaohuo.db
+data/diaohuo.db.backup_*
+data/backup/
+
+# 测试输出
+test_output/
+test_output*.txt
+test_output_log.txt
+simple_log.txt
+build_log.txt
+extract_log.txt
+
+# 旧版本备份
+backup_v*/
+
+# 可执行文件
+*.exe
+dist/
+
+# 系统文件
+.DS_Store
+Thumbs.db
+
+# 临时文件
+*.tmp
+*.bak

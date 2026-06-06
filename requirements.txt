@@ -1,0 +1,5 @@
+# 调货助手 - 依赖清单
+PyQt6>=6.5.0
+python-docx>=0.8.11
+Pillow>=10.0.0
+openpyxl>=3.1.0
