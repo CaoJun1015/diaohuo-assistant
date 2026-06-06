@@ -34,6 +34,7 @@ from src.models.database import (
 from src.utils.word_parser import parse_word_pricelist, preview_parse
 from src.utils.image_gen import generate_quote_image, generate_single_quote_card, WATERMARK_TEXT
 from src.utils.excel_export import export_quotes_to_excel
+from src.utils.price_diff import save_snapshot, get_latest_snapshot, diff_snapshots, get_all_snapshots
 
 
 # ============================================================
@@ -2155,6 +2156,112 @@ class MainWindow(QMainWindow):
 
         self.refresh_product_list(self.search_edit.text().strip())
         QMessageBox.information(self, "导入完成", f"成功导入 {imported} 条新机型\n跳过 {len(products)-imported} 条已存在的记录")
+
+        # ---- Skill 2: 价格异动哨兵 ----
+        # 保存本次快照
+        try:
+            snapshot_id, count = save_snapshot(products)
+        except Exception:
+            snapshot_id = None
+
+        # 和上一次快照做对比
+        if snapshot_id:
+            try:
+                today = datetime.now().strftime("%Y-%m-%d")
+                old_snapshot = get_latest_snapshot(before_date=today)
+                # 如果今天之前没有更早的快照，再取最新的（可能是今天刚导入的前一次）
+                if old_snapshot is None:
+                    old_snapshot = get_latest_snapshot()
+                    # 排除当前这次刚保存的
+                    if old_snapshot and old_snapshot["snapshot_id"] == snapshot_id:
+                        old_snapshot = None
+
+                if old_snapshot:
+                    diff = diff_snapshots(old_snapshot, products)
+                    if diff["added"] or diff["removed"]:
+                        self._show_diff_report(diff)
+                else:
+                    QMessageBox.information(
+                        self, "首次快照",
+                        f"已保存价格快照（{count} 条机型）。\n下次导入时将自动对比变动。"
+                    )
+            except Exception as e:
+                pass  # 异动分析失败不影响主流程
+
+    # -------------------------------------------------------
+    # 价格异动报告（Skill 2）
+    # -------------------------------------------------------
+    def _show_diff_report(self, diff):
+        """弹出价格异动报告对话框"""
+        dlg = QDialog(self)
+        dlg.setWindowTitle("📊 价格异动报告")
+        dlg.setMinimumSize(700, 500)
+        layout = QVBoxLayout(dlg)
+
+        # 标题
+        title = QLabel(f"📊 价格异动报告（{diff['old_date']} → {diff['new_date']}）")
+        title.setStyleSheet("font-size: 16px; font-weight: bold; color: #1976D2; padding: 8px;")
+        layout.addWidget(title)
+
+        # 摘要
+        summary = QLabel(diff["summary"])
+        summary.setStyleSheet("font-size: 14px; font-weight: bold; padding: 4px 8px;")
+        layout.addWidget(summary)
+
+        # Tab 切换
+        tabs = QTabWidget()
+
+        # === 新增 ===
+        if diff["added"]:
+            add_tab = QWidget()
+            add_layout = QVBoxLayout(add_tab)
+            add_table = QTableWidget()
+            add_table.setColumnCount(6)
+            add_table.setHorizontalHeaderLabels(["系列", "CPU", "内存", "硬盘", "显卡", "备注"])
+            add_table.setRowCount(len(diff["added"]))
+            for i, item in enumerate(diff["added"]):
+                add_table.setItem(i, 0, QTableWidgetItem(item.get("series", "")))
+                add_table.setItem(i, 1, QTableWidgetItem(item.get("cpu", "")))
+                add_table.setItem(i, 2, QTableWidgetItem(item.get("ram", "")))
+                add_table.setItem(i, 3, QTableWidgetItem(item.get("storage", "")))
+                add_table.setItem(i, 4, QTableWidgetItem(item.get("gpu", "")))
+                add_table.setItem(i, 5, QTableWidgetItem(item.get("note", "")))
+            add_table.horizontalHeader().setStretchLastSection(True)
+            add_table.resizeColumnsToContents()
+            add_layout.addWidget(add_table)
+            tabs.addTab(add_tab, f"🔵 新增 ({len(diff['added'])})")
+
+        # === 下架 ===
+        if diff["removed"]:
+            rm_tab = QWidget()
+            rm_layout = QVBoxLayout(rm_tab)
+            rm_label = QLabel("⚠️ 以下机型在新价格表中已下架，请检查是否有库存需要尽快出货：")
+            rm_label.setStyleSheet("color: #D32F2F; font-weight: bold; padding: 4px;")
+            rm_layout.addWidget(rm_label)
+            rm_table = QTableWidget()
+            rm_table.setColumnCount(6)
+            rm_table.setHorizontalHeaderLabels(["系列", "CPU", "内存", "硬盘", "显卡", "备注"])
+            rm_table.setRowCount(len(diff["removed"]))
+            for i, item in enumerate(diff["removed"]):
+                rm_table.setItem(i, 0, QTableWidgetItem(item.get("series", "")))
+                rm_table.setItem(i, 1, QTableWidgetItem(item.get("cpu", "")))
+                rm_table.setItem(i, 2, QTableWidgetItem(item.get("ram", "")))
+                rm_table.setItem(i, 3, QTableWidgetItem(item.get("storage", "")))
+                rm_table.setItem(i, 4, QTableWidgetItem(item.get("gpu", "")))
+                rm_table.setItem(i, 5, QTableWidgetItem(item.get("note", "")))
+            rm_table.horizontalHeader().setStretchLastSection(True)
+            rm_table.resizeColumnsToContents()
+            rm_layout.addWidget(rm_table)
+            tabs.addTab(rm_tab, f"⚠️ 下架 ({len(diff['removed'])})")
+
+        layout.addWidget(tabs)
+
+        # 底部按钮
+        buttons = QDialogButtonBox(QDialogButtonBox.StandardButton.Ok)
+        buttons.accepted.connect(dlg.accept)
+        layout.addWidget(buttons)
+
+        dlg.exec()
 
     # -------------------------------------------------------
     # 群发图片

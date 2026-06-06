@@ -218,6 +218,36 @@ def init_db():
         """)
     except:
         pass
+
+    # 价格快照表（Skill 2: 价格异动哨兵）
+    try:
+        cursor.execute("""
+            CREATE TABLE IF NOT EXISTS price_snapshots (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                import_date TEXT NOT NULL,
+                item_count INTEGER DEFAULT 0,
+                created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+            )
+        """)
+        cursor.execute("""
+            CREATE TABLE IF NOT EXISTS price_snapshot_items (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                snapshot_id INTEGER NOT NULL,
+                series TEXT,
+                cpu TEXT,
+                ram TEXT,
+                storage TEXT,
+                gpu TEXT,
+                note TEXT,
+                norm_key TEXT,
+                FOREIGN KEY (snapshot_id) REFERENCES price_snapshots(id) ON DELETE CASCADE
+            )
+        """)
+        cursor.execute("CREATE INDEX IF NOT EXISTS idx_snapshot_date ON price_snapshots(import_date)")
+        cursor.execute("CREATE INDEX IF NOT EXISTS idx_snapshot_items ON price_snapshot_items(snapshot_id)")
+        cursor.execute("CREATE INDEX IF NOT EXISTS idx_snapshot_normkey ON price_snapshot_items(norm_key)")
+    except:
+        pass
     
     try:
         cursor.execute("CREATE INDEX IF NOT EXISTS idx_products_series ON products(series)")
