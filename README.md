@@ -7,7 +7,7 @@
 ![License](https://img.shields.io/badge/license-MIT-blue?style=flat-square)
 ![Python](https://img.shields.io/badge/python-3.10%2B-3776AB?style=flat-square&logo=python&logoColor=white)
 ![Platform](https://img.shields.io/badge/platform-Windows-0078D6?style=flat-square&logo=windows&logoColor=white)
-![Version](https://img.shields.io/badge/version-v1.05-brightgreen?style=flat-square)
+![Version](https://img.shields.io/badge/version-v1.06-brightgreen?style=flat-square)
 ![GitHub](https://img.shields.io/badge/GitHub-CaoJun1015-181717?style=flat-square&logo=github&logoColor=white)
 
 从上游价格表解析、报价、出库、收款到对账，一站式管理你的调货生意。
