@@ -37,8 +37,8 @@ from src.utils.excel_export import export_quotes_to_excel
 from src.utils.price_diff import save_snapshot, get_latest_snapshot, diff_snapshots, get_all_snapshots
 from src.utils.follow_up import get_stale_quotes, format_reminder_text
 from src.utils.monthly_report import get_monthly_report, format_report_text
-from src.utils.shipment_flow import parse_sn_input, validate_sn_list, check_sn_duplicates, generate_shipment_receipt
-from src.utils.quote_assist import suggest_price, get_quote_history
+from src.utils.shipment_flow import parse_sn_input, validate_sn, validate_sn_list, check_sn_duplicates, generate_shipment_receipt
+from src.utils.quote_assist import get_quote_history, suggest_price, get_customer_price_history
 from src.utils.remote_diagnose import search_diagnose, get_diagnose_tree, get_all_diagnose_keys, generate_diagnose_report
 
 
@@ -649,7 +649,7 @@ class QuoteEditDialog(QDialog):
                 if qdate.isValid():
                     self.date_edit.setDate(qdate)
             self.remark_edit.setText(quote.get("remark", ""))
-            self.sn_edit.setText(quote.get("sn_list", ""))
+            self.sn_edit.setText(quote.get("sn_list", "") or quote.get("batch_sn_list", ""))
             paid_value = quote.get("paid", "否")
             idx = self.paid_combo.findText(paid_value)
             if idx >= 0:
@@ -1023,7 +1023,7 @@ class QuotePanel(QWidget):
 class MainWindow(QMainWindow):
     def __init__(self):
         super().__init__()
-        self.setWindowTitle("调货助手 v1.04")
+        self.setWindowTitle("调货助手 v1.06")
         self.setMinimumSize(1100, 700)
         self.setStyleSheet(APP_STYLE)
 
@@ -1066,6 +1066,12 @@ class MainWindow(QMainWindow):
         self.report_btn.clicked.connect(self.on_monthly_report)
         self.diagnose_btn = QPushButton("🔧 远程诊断")
         self.diagnose_btn.clicked.connect(self.on_remote_diagnose)
+        self.price_diff_btn = QPushButton("价格异动")
+        self.price_diff_btn.clicked.connect(self.on_price_diff)
+        self.quote_assist_btn = QPushButton("报价助手")
+        self.quote_assist_btn.clicked.connect(self.on_quote_assist)
+        self.shipment_flow_btn = QPushButton("出库一条龙")
+        self.shipment_flow_btn.clicked.connect(self.on_shipment_flow)
 
         top_bar.addWidget(QLabel("🔍"))
         top_bar.addWidget(self.search_edit)
@@ -1073,6 +1079,9 @@ class MainWindow(QMainWindow):
         top_bar.addWidget(self.follow_up_btn)
         top_bar.addWidget(self.report_btn)
         top_bar.addWidget(self.diagnose_btn)
+        top_bar.addWidget(self.price_diff_btn)
+        top_bar.addWidget(self.quote_assist_btn)
+        top_bar.addWidget(self.shipment_flow_btn)
         top_bar.addWidget(self.import_btn)
         top_bar.addWidget(self.broadcast_btn)
         top_bar.addWidget(self.export_btn)
@@ -2033,7 +2042,7 @@ class MainWindow(QMainWindow):
         for i, q in enumerate(quotes):
             status = q.get("status", "待确认")
             received = q.get("received_amount", 0) or 0
-            sn_list = q.get("sn_list", "") or ""
+            sn_list = q.get("sn_list", "") or q.get("batch_sn_list", "") or ""
             quote_price = q.get("quote_price", 0) or 0
             quote_quantity = q.get("quote_quantity", 1) or 1
             total_amount = quote_price * quote_quantity
@@ -2398,6 +2407,156 @@ class MainWindow(QMainWindow):
         clipboard = QApplication.clipboard()
         clipboard.setText(report)
         QMessageBox.information(self, "诊断报告", f"报告已复制到剪贴板！\n\n{report}")
+
+    # -------------------------------------------------------
+    # Skill: 价格异动哨兵
+    # -------------------------------------------------------
+    def on_price_diff(self):
+        """价格异动哨兵 - 在导入Word时自动对比"""
+        snapshots = get_all_snapshots()
+        if not snapshots:
+            QMessageBox.information(self, "价格异动", "暂无历史价格快照。\n导入 Word 价格表时会自动保存快照。")
+            return
+
+        latest = get_latest_snapshot()
+        if not latest:
+            QMessageBox.information(self, "价格异动", "无法获取最新快照")
+            return
+
+        # 显示快照列表
+        items_text = "\n".join([f"  {s['import_date']} | {s['item_count']} 条机型" for s in snapshots[:10]])
+        QMessageBox.information(self, "价格快照历史", f"已有 {len(snapshots)} 个快照：\n\n{items_text}\n\n下次导入 Word 价格表时将自动对比异动。")
+
+    # -------------------------------------------------------
+    # Skill: 报价决策助手
+    # -------------------------------------------------------
+    def on_quote_assist(self):
+        """报价决策助手"""
+        dlg = QDialog(self)
+        dlg.setWindowTitle("报价决策助手")
+        dlg.setMinimumWidth(450)
+        layout = QFormLayout(dlg)
+
+        series_edit = QLineEdit()
+        series_edit.setPlaceholderText("输入系列名称（如 Y7000P）")
+        cpu_edit = QLineEdit()
+        cpu_edit.setPlaceholderText("CPU（选填）")
+        price_spin = QSpinBox()
+        price_spin.setRange(0, 999999)
+        price_spin.setPrefix("¥ ")
+        customer_edit = QLineEdit()
+        customer_edit.setPlaceholderText("客户名称（选填）")
+
+        layout.addRow("系列:", series_edit)
+        layout.addRow("CPU:", cpu_edit)
+        layout.addRow("进货价:", price_spin)
+        layout.addRow("客户:", customer_edit)
+
+        buttons = QDialogButtonBox(QDialogButtonBox.StandardButton.Ok | QDialogButtonBox.StandardButton.Cancel)
+        buttons.accepted.connect(dlg.accept)
+        buttons.rejected.connect(dlg.reject)
+        layout.addRow(buttons)
+
+        if dlg.exec():
+            series = series_edit.text().strip()
+            if not series:
+                QMessageBox.warning(self, "提示", "请输入系列名称")
+                return
+            suggestion = suggest_price(
+                series=series,
+                cpu=cpu_edit.text().strip(),
+                purchase_price=price_spin.value(),
+                customer_name=customer_edit.text().strip(),
+            )
+
+            conf_text = {"high": "高", "medium": "中", "low": "低"}[suggestion["confidence"]]
+            text = (
+                f"建议报价范围: ¥{suggestion['suggested_min']:,.0f} ~ ¥{suggestion['suggested_max']:,.0f}\n"
+                f"建议中间价: ¥{suggestion['suggested_mid']:,.0f}\n"
+                f"利润率: {suggestion['margin_at_mid']:.1f}%\n"
+                f"置信度: {conf_text}\n\n"
+                f"依据: {suggestion['basis']}"
+            )
+            if suggestion.get("history"):
+                h = suggestion["history"]
+                text += f"\n\n历史报价: {h['total_quotes']} 条\n区间: ¥{h['min_price']:,.0f} ~ ¥{h['max_price']:,.0f}\n均价: ¥{h['avg_price']:,.0f}"
+
+            QMessageBox.information(self, "报价建议", text)
+
+    # -------------------------------------------------------
+    # Skill: 出库一条龙
+    # -------------------------------------------------------
+    def on_shipment_flow(self):
+        """出库一条龙 - SN批量校验"""
+        dlg = QDialog(self)
+        dlg.setWindowTitle("出库一条龙 - SN批量校验")
+        dlg.setMinimumWidth(500)
+        dlg.setMinimumHeight(400)
+        layout = QVBoxLayout(dlg)
+
+        layout.addWidget(QLabel("批量输入SN（支持条码枪连续扫入，换行/逗号分隔）:"))
+        sn_input = QTextEdit()
+        sn_input.setPlaceholderText("扫码或粘贴SN，多个SN用换行或逗号分隔...")
+        layout.addWidget(sn_input)
+
+        qty_row = QHBoxLayout()
+        qty_spin = QSpinBox()
+        qty_spin.setRange(0, 9999)
+        qty_spin.setValue(0)
+        qty_row.addWidget(QLabel("期望数量:"))
+        qty_row.addWidget(qty_spin)
+        qty_row.addStretch()
+        layout.addLayout(qty_row)
+
+        result_area = QTextEdit()
+        result_area.setReadOnly(True)
+        layout.addWidget(result_area)
+
+        btn_row = QHBoxLayout()
+        check_btn = QPushButton("校验SN")
+        def on_check():
+            raw = sn_input.toPlainText()
+            sn_list = parse_sn_input(raw)
+            if not sn_list:
+                result_area.setPlainText("未输入SN")
+                return
+            expected = qty_spin.value() if qty_spin.value() > 0 else None
+            result = validate_sn_list(sn_list, expected)
+            text = result["message"] + "\n\n"
+            if result["valid"]:
+                text += f"有效SN:\n" + "\n".join([f"  {sn}" for sn in result["valid"]]) + "\n"
+            if result["invalid"]:
+                text += f"无效SN:\n" + "\n".join([f"  {sn} - {msg}" for sn, msg in result["invalid"]]) + "\n"
+            result_area.setPlainText(text)
+
+        check_btn.clicked.connect(on_check)
+
+        receipt_btn = QPushButton("生成出库单")
+        def on_receipt():
+            raw = sn_input.toPlainText()
+            sn_list = parse_sn_input(raw)
+            valid = [sn for sn in sn_list if validate_sn(sn)[0]]
+            if not valid:
+                QMessageBox.warning(self, "提示", "没有有效的SN")
+                return
+            receipt = generate_shipment_receipt(
+                {"series": "手动出库", "customer_name": "________", "quote_price": 0, "quote_quantity": len(valid)},
+                valid
+            )
+            clipboard = QApplication.clipboard()
+            clipboard.setText(receipt)
+            QMessageBox.information(self, "出库单", "出库确认单已复制到剪贴板！")
+
+        receipt_btn.clicked.connect(on_receipt)
+        close_btn = QPushButton("关闭")
+        close_btn.clicked.connect(dlg.reject)
+        btn_row.addWidget(check_btn)
+        btn_row.addWidget(receipt_btn)
+        btn_row.addStretch()
+        btn_row.addWidget(close_btn)
+        layout.addLayout(btn_row)
+
+        dlg.exec()
 
     # -------------------------------------------------------
     # 价格异动报告（Skill 2）
