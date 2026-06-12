@@ -25,6 +25,14 @@ data/diaohuo.db
 data/diaohuo.db.backup_*
 data/backup/
 
+# 测试文件
+test_*.py
+*_test.py
+
+# 脚本文件
+*.bat
+*.ps1
+
 # 测试输出
 test_output/
 test_output*.txt
