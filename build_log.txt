@@ -1,0 +1,143 @@
+﻿python : 414 INFO: PyInstaller: 6.20.0, contrib hooks: 2026.5
+所在位置 行:1 字符: 83
++ ... lyContinue; python -m PyInstaller "调货助手 v1.03.spec" --noconfirm 2>&1  ...
++                 ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+    + CategoryInfo          : NotSpecified: (414 INFO: PyIns...b hooks: 2026.5 
+   :String) [], RemoteException
+    + FullyQualifiedErrorId : NativeCommandError
+ 
+414 INFO: Python: 3.13.0a5
+465 INFO: Platform: Windows-11-10.0.22631-SP0
+465 INFO: Python environment: D:\computerlanguage\Python
+482 INFO: Module search paths (PYTHONPATH):
+['D:\\OH-workspace\\diaohuo-assistant',
+ 'D:\\computerlanguage\\Python\\python313.zip',
+ 'D:\\computerlanguage\\Python\\DLLs',
+ 'D:\\computerlanguage\\Python\\Lib',
+ 'D:\\computerlanguage\\Python',
+ 'D:\\computerlanguage\\Python\\Lib\\site-packages',
+ 'D:\\OH-workspace\\diaohuo-assistant']
+1244 INFO: checking Analysis
+1246 INFO: Building Analysis because Analysis-00.toc is non existent
+1246 INFO: Looking for Python shared library...
+1246 INFO: Using Python shared library: D:\computerlanguage\Python\python313.dl
+l
+1246 INFO: Running Analysis Analysis-00.toc
+1246 INFO: Target bytecode optimization level: 0
+1246 INFO: Initializing module dependency graph...
+1250 INFO: Initializing module graph hook caches...
+1280 INFO: Analyzing modules for base_library.zip ...
+3733 INFO: Processing standard module hook 'hook-heapq.py' from 'D:\\computerla
+nguage\\Python\\Lib\\site-packages\\PyInstaller\\hooks'
+3869 INFO: Processing standard module hook 'hook-encodings.py' from 'D:\\comput
+erlanguage\\Python\\Lib\\site-packages\\PyInstaller\\hooks'
+6946 INFO: Processing standard module hook 'hook-pickle.py' from 'D:\\computerl
+anguage\\Python\\Lib\\site-packages\\PyInstaller\\hooks'
+8959 INFO: Caching module dependency graph...
+9014 INFO: Analyzing D:\OH-workspace\diaohuo-assistant\run.py
+9110 INFO: Processing standard module hook 'hook-PyQt6.py' from 'D:\\computerla
+nguage\\Python\\Lib\\site-packages\\PyInstaller\\hooks'
+10196 INFO: Processing standard module hook 'hook-PyQt6.QtWidgets.py' from 'D:\
+\computerlanguage\\Python\\Lib\\site-packages\\PyInstaller\\hooks'
+11253 INFO: Processing standard module hook 'hook-PyQt6.QtCore.py' from 'D:\\co
+mputerlanguage\\Python\\Lib\\site-packages\\PyInstaller\\hooks'
+12613 INFO: Processing standard module hook 'hook-PyQt6.QtGui.py' from 'D:\\com
+puterlanguage\\Python\\Lib\\site-packages\\PyInstaller\\hooks'
+14132 INFO: Processing standard module hook 'hook-sqlite3.py' from 'D:\\compute
+rlanguage\\Python\\Lib\\site-packages\\PyInstaller\\hooks'
+14944 INFO: Processing standard module hook 'hook-xml.py' from 'D:\\computerlan
+guage\\Python\\Lib\\site-packages\\PyInstaller\\hooks'
+14980 INFO: Processing standard module hook 'hook-xml.etree.cElementTree.py' fr
+om 'D:\\computerlanguage\\Python\\Lib\\site-packages\\PyInstaller\\hooks'
+14988 INFO: Processing standard module hook 'hook-docx.py' from 'D:\\computerla
+nguage\\Python\\Lib\\site-packages\\_pyinstaller_hooks_contrib\\stdhooks'
+15625 INFO: Processing pre-safe-import-module hook 'hook-typing_extensions.py' 
+from 'D:\\computerlanguage\\Python\\Lib\\site-packages\\PyInstaller\\hooks\\pre
+_safe_import_module'
+15628 INFO: SetuptoolsInfo: initializing cached setuptools info...
+17047 INFO: Processing standard module hook 'hook-multiprocessing.util.py' from
+ 'D:\\computerlanguage\\Python\\Lib\\site-packages\\PyInstaller\\hooks'
+17777 INFO: Processing standard module hook 'hook-_ctypes.py' from 'D:\\compute
+rlanguage\\Python\\Lib\\site-packages\\PyInstaller\\hooks'
+18368 INFO: Processing standard module hook 'hook-lxml.py' from 'D:\\computerla
+nguage\\Python\\Lib\\site-packages\\_pyinstaller_hooks_contrib\\stdhooks'
+19122 INFO: Processing standard module hook 'hook-lxml.etree.py' from 'D:\\comp
+uterlanguage\\Python\\Lib\\site-packages\\_pyinstaller_hooks_contrib\\stdhooks'
+19757 INFO: Processing standard module hook 'hook-PIL.py' from 'D:\\computerlan
+guage\\Python\\Lib\\site-packages\\PyInstaller\\hooks'
+19917 INFO: Processing standard module hook 'hook-PIL.Image.py' from 'D:\\compu
+terlanguage\\Python\\Lib\\site-packages\\PyInstaller\\hooks'
+20924 INFO: Processing standard module hook 'hook-PIL.ImageFilter.py' from 'D:\
+\computerlanguage\\Python\\Lib\\site-packages\\PyInstaller\\hooks'
+21406 INFO: Processing standard module hook 'hook-openpyxl.py' from 'D:\\comput
+erlanguage\\Python\\Lib\\site-packages\\_pyinstaller_hooks_contrib\\stdhooks'
+23811 INFO: Processing module hooks (post-graph stage)...
+24277 INFO: Processing standard module hook 'hook-difflib.py' from 'D:\\compute
+rlanguage\\Python\\Lib\\site-packages\\PyInstaller\\hooks'
+24635 INFO: Processing standard module hook 'hook-platform.py' from 'D:\\comput
+erlanguage\\Python\\Lib\\site-packages\\PyInstaller\\hooks'
+24665 INFO: Processing standard module hook 'hook-sysconfig.py' from 'D:\\compu
+terlanguage\\Python\\Lib\\site-packages\\PyInstaller\\hooks'
+25558 INFO: Processing standard module hook 'hook-charset_normalizer.py' from '
+D:\\computerlanguage\\Python\\Lib\\site-packages\\_pyinstaller_hooks_contrib\\s
+tdhooks'
+26030 INFO: Processing standard module hook 'hook-lxml.isoschematron.py' from '
+D:\\computerlanguage\\Python\\Lib\\site-packages\\_pyinstaller_hooks_contrib\\s
+tdhooks'
+26597 INFO: Processing standard module hook 'hook-PIL.SpiderImagePlugin.py' fro
+m 'D:\\computerlanguage\\Python\\Lib\\site-packages\\PyInstaller\\hooks'
+26680 WARNING: Hidden import "charset_normalizer.md__mypyc" not found!
+26681 INFO: Processing standard module hook 'hook-lxml.objectify.py' from 'D:\\
+computerlanguage\\Python\\Lib\\site-packages\\_pyinstaller_hooks_contrib\\stdho
+oks'
+26690 INFO: Performing binary vs. data reclassification (147 entries)
+26785 INFO: Looking for ctypes DLLs
+26792 INFO: Analyzing run-time hooks ...
+26795 INFO: Including run-time hook 'pyi_rth_inspect.py' from 'D:\\computerlang
+uage\\Python\\Lib\\site-packages\\PyInstaller\\hooks\\rthooks'
+26800 INFO: Including run-time hook 'pyi_rth_pkgutil.py' from 'D:\\computerlang
+uage\\Python\\Lib\\site-packages\\PyInstaller\\hooks\\rthooks'
+26805 INFO: Including run-time hook 'pyi_rth_multiprocessing.py' from 'D:\\comp
+uterlanguage\\Python\\Lib\\site-packages\\PyInstaller\\hooks\\rthooks'
+26808 INFO: Including run-time hook 'pyi_rth_pyqt6.py' from 'D:\\computerlangua
+ge\\Python\\Lib\\site-packages\\PyInstaller\\hooks\\rthooks'
+26811 INFO: Processing pre-find-module-path hook 'hook-_pyi_rth_utils.py' from 
+'D:\\computerlanguage\\Python\\Lib\\site-packages\\PyInstaller\\hooks\\pre_find
+_module_path'
+26814 INFO: Processing standard module hook 'hook-_pyi_rth_utils.py' from 'D:\\
+computerlanguage\\Python\\Lib\\site-packages\\PyInstaller\\hooks'
+26838 INFO: Creating base_library.zip...
+26866 INFO: Looking for dynamic libraries
+28311 INFO: Extra DLL search directories (AddDllDirectory): ['D:\\computerlangu
+age\\Python\\Lib\\site-packages\\PyQt6\\Qt6\\bin']
+28311 INFO: Extra DLL search directories (PATH): ['D:\\computerlanguage\\Python
+\\Lib\\site-packages\\PyQt6\\Qt6\\bin']
+34295 INFO: Warnings written to D:\OH-workspace\diaohuo-assistant\build\调货助手 v1
+.03\warn-调货助手 v1.03.txt
+34362 INFO: Graph cross-reference written to D:\OH-workspace\diaohuo-assistant\
+build\调货助手 v1.03\xref-调货助手 v1.03.html
+34402 INFO: checking PYZ
+34402 INFO: Building PYZ because PYZ-00.toc is non existent
+34403 INFO: Building PYZ (ZlibArchive) D:\OH-workspace\diaohuo-assistant\build\
+调货助手 v1.03\PYZ-00.pyz
+34989 INFO: Building PYZ (ZlibArchive) D:\OH-workspace\diaohuo-assistant\build\
+调货助手 v1.03\PYZ-00.pyz completed successfully.
+35010 INFO: checking PKG
+35010 INFO: Building PKG because PKG-00.toc is non existent
+35010 INFO: Building PKG (CArchive) 调货助手 v1.03.pkg
+50315 INFO: Building PKG (CArchive) 调货助手 v1.03.pkg completed successfully.
+50323 INFO: Bootloader D:\computerlanguage\Python\Lib\site-packages\PyInstaller
+\bootloader\Windows-64bit-intel\runw.exe
+50323 INFO: checking EXE
+50323 INFO: Building EXE because EXE-00.toc is non existent
+50323 INFO: Building EXE from EXE-00.toc
+50390 INFO: Copying bootloader EXE to D:\OH-workspace\diaohuo-assistant\dist\调货
+助手 v1.03.exe
+50483 INFO: Copying icon to EXE
+50530 INFO: Copying 0 resources to EXE
+50530 INFO: Embedding manifest in EXE
+50573 INFO: Appending PKG archive to EXE
+50688 INFO: Fixing EXE headers
+56310 INFO: Building EXE from EXE-00.toc completed successfully.
+56315 INFO: Build complete! The results are available in: D:\OH-workspace\diaoh
+uo-assistant\dist
