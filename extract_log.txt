@@ -1,9 +1,0 @@
-[11:03:59] 程序启动
-[11:03:59] MainWindow初始化
-[11:03:59] DropArea初始化完成
-[11:03:59] MainWindow初始化完成
-[11:04:00] 窗口显示
-[11:04:23] 检测到文件拖拽
-[11:04:23] 原始文件路径: 'D:/xwechat_files/wxid_zpz6txeznwkw22_1645/msg/file/2026-05/新建 Microsoft Word 文档.docx'
-[11:04:23] 处理后文件路径: D:/xwechat_files/wxid_zpz6txeznwkw22_1645/msg/file/2026-05/新建 Microsoft Word 文档.docx
-[11:04:23] 文件大小: 14786 bytes
