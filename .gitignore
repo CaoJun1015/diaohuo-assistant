@@ -25,6 +25,14 @@ data/*.db
 # Backup directories
 backup*/
 
+# Virtual environments
+.venv/
+.venv311/
+.streamlit/
+
+# Backup files
+*.backup_*
+
 # PyInstaller artifacts
 __pycache__/
 *.pyc
