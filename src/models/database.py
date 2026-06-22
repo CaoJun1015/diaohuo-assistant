@@ -516,7 +516,9 @@ def add_quote(batch_id, customer_id, quote_price, quote_quantity, quote_date, re
         (batch_id, customer_id, quote_price, quote_quantity, quote_date, remark, paid, status, received_amount, sn_list),
     )
     conn.commit()
+    qid = conn.execute("SELECT last_insert_rowid()").fetchone()[0]
     conn.close()
+    return qid
 
 
 def update_quote(quote_id, batch_id, customer_id, quote_price, quote_quantity, quote_date, remark, paid, sn_list=""):
@@ -631,7 +633,9 @@ def add_payment(quote_id=None, customer_id=None, supplier_id=None, pay_type="rec
             "UPDATE suppliers SET balance = balance - ? WHERE id=?", (amount, supplier_id)
         )
     conn.commit()
+    pid = conn.execute("SELECT last_insert_rowid()").fetchone()[0]
     conn.close()
+    return pid
 
 
 def get_payments(quote_id=None, customer_id=None, supplier_id=None):
