@@ -5,6 +5,7 @@ node_modules/
 dist/
 build/
 *.spec
+!build.spec
 
 # Environment variables
 .env
@@ -32,6 +33,9 @@ backup*/
 
 # Backup files
 *.backup_*
+
+# IDE
+.idea/
 
 # PyInstaller artifacts
 __pycache__/
