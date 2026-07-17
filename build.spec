@@ -40,7 +40,7 @@ exe = EXE(
     a.zipfiles,
     a.datas,
     [],
-    name='调货助手 v1.03',
+    name='调货助手 v1.08',
     debug=False,
     bootloader_ignore_signals=False,
     strip=False,

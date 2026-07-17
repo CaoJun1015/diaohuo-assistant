@@ -286,15 +286,40 @@ def update_product(pid, series, cpu, ram, storage, gpu, screen, note):
 
 
 def delete_product(pid):
+    """
+    删除机型，级联删除关联数据
+
+    特殊处理：
+    - 回滚各关联批次的供应商欠款
+    - 级联删除报价和付款记录
+    """
     conn = get_connection()
-    conn.execute("PRAGMA foreign_keys = OFF")
-    conn.execute("DELETE FROM payments WHERE quote_id IN (SELECT id FROM quotes WHERE batch_id IN (SELECT id FROM batches WHERE product_id=?))", (pid,))
-    conn.execute("DELETE FROM quotes WHERE batch_id IN (SELECT id FROM batches WHERE product_id=?)", (pid,))
-    conn.execute("DELETE FROM batches WHERE product_id=?", (pid,))
-    conn.execute("DELETE FROM products WHERE id=?", (pid,))
-    conn.execute("PRAGMA foreign_keys = ON")
-    conn.commit()
-    conn.close()
+    try:
+        conn.execute("PRAGMA foreign_keys = OFF")
+
+        # 先回滚各批次的供应商欠款
+        batch_rows = conn.execute(
+            "SELECT supplier_id, purchase_price, quantity FROM batches WHERE product_id=? AND supplier_id IS NOT NULL",
+            (pid,)
+        ).fetchall()
+        for row in batch_rows:
+            total = row["purchase_price"] * row["quantity"]
+            conn.execute(
+                "UPDATE suppliers SET balance = balance - ? WHERE id=?",
+                (total, row["supplier_id"])
+            )
+
+        conn.execute("DELETE FROM payments WHERE quote_id IN (SELECT id FROM quotes WHERE batch_id IN (SELECT id FROM batches WHERE product_id=?))", (pid,))
+        conn.execute("DELETE FROM quotes WHERE batch_id IN (SELECT id FROM batches WHERE product_id=?)", (pid,))
+        conn.execute("DELETE FROM batches WHERE product_id=?", (pid,))
+        conn.execute("DELETE FROM products WHERE id=?", (pid,))
+        conn.execute("PRAGMA foreign_keys = ON")
+        conn.commit()
+    except Exception as e:
+        conn.rollback()
+        raise e
+    finally:
+        conn.close()
 
 
 def search_products(keyword):
@@ -389,14 +414,40 @@ def get_batch_remaining(batch_id):
 
 
 def delete_batch(batch_id):
+    """
+    删除批次
+
+    特殊处理：
+    - 回滚供应商欠款（如果批次有关联供应商）
+    - 级联删除关联的报价和付款记录
+    """
     conn = get_connection()
-    conn.execute("PRAGMA foreign_keys = OFF")
-    conn.execute("DELETE FROM payments WHERE quote_id IN (SELECT id FROM quotes WHERE batch_id=?)", (batch_id,))
-    conn.execute("DELETE FROM quotes WHERE batch_id=?", (batch_id,))
-    conn.execute("DELETE FROM batches WHERE id=?", (batch_id,))
-    conn.execute("PRAGMA foreign_keys = ON")
-    conn.commit()
-    conn.close()
+    try:
+        # 先查询批次信息，用于回滚供应商欠款
+        row = conn.execute(
+            "SELECT supplier_id, purchase_price, quantity FROM batches WHERE id=?", (batch_id,)
+        ).fetchone()
+
+        conn.execute("PRAGMA foreign_keys = OFF")
+
+        # 回滚供应商欠款
+        if row and row[0]:
+            total = row[1] * row[2]
+            conn.execute(
+                "UPDATE suppliers SET balance = balance - ? WHERE id=?",
+                (total, row[0])
+            )
+
+        conn.execute("DELETE FROM payments WHERE quote_id IN (SELECT id FROM quotes WHERE batch_id=?)", (batch_id,))
+        conn.execute("DELETE FROM quotes WHERE batch_id=?", (batch_id,))
+        conn.execute("DELETE FROM batches WHERE id=?", (batch_id,))
+        conn.execute("PRAGMA foreign_keys = ON")
+        conn.commit()
+    except Exception as e:
+        conn.rollback()
+        raise e
+    finally:
+        conn.close()
 
 
 def get_total_remaining(product_id):
@@ -532,13 +583,42 @@ def update_quote(quote_id, batch_id, customer_id, quote_price, quote_quantity, q
 
 
 def delete_quote(quote_id):
+    """
+    删除报价记录
+
+    特殊处理：
+    - 如果报价状态为"已出库"，先回补库存再删除
+    - 级联删除关联的收付款记录
+    - 注意：出库时 SN 保存到 quotes.sn_list，batches.sn_list 不被修改，删除时无需处理 SN
+    """
     conn = get_connection()
-    conn.execute("PRAGMA foreign_keys = OFF")
-    conn.execute("DELETE FROM payments WHERE quote_id=?", (quote_id,))
-    conn.execute("DELETE FROM quotes WHERE id=?", (quote_id,))
-    conn.execute("PRAGMA foreign_keys = ON")
-    conn.commit()
-    conn.close()
+    try:
+        # 获取报价信息，判断是否需要回补库存
+        row = conn.execute(
+            "SELECT status, batch_id, quote_quantity FROM quotes WHERE id=?",
+            (quote_id,)
+        ).fetchone()
+
+        if row and row[0] == "已出库":
+            batch_id = row[1]
+            quote_quantity = row[2] or 0
+
+            # 回补库存
+            conn.execute(
+                "UPDATE batches SET remaining = remaining + ? WHERE id = ?",
+                (quote_quantity, batch_id)
+            )
+
+        conn.execute("PRAGMA foreign_keys = OFF")
+        conn.execute("DELETE FROM payments WHERE quote_id=?", (quote_id,))
+        conn.execute("DELETE FROM quotes WHERE id=?", (quote_id,))
+        conn.execute("PRAGMA foreign_keys = ON")
+        conn.commit()
+    except Exception as e:
+        conn.rollback()
+        raise e
+    finally:
+        conn.close()
 
 
 def get_quote_by_id(quote_id):
@@ -604,38 +684,108 @@ def export_quotes(date_from="", date_to="", customer_id=None):
 
 
 def update_quote_status(quote_id, new_status):
+    """
+    更新报价状态
+
+    特殊处理：
+    - 从"已出库"变为"已取消"时，回补库存（将数量加回批次剩余）
+    - 清空 quotes.sn_list（出库SN已回到仓库）
+    - 注意：出库时 SN 保存到 quotes.sn_list，batches.sn_list 不被修改
+    """
     conn = get_connection()
-    conn.execute("UPDATE quotes SET status=? WHERE id=?", (new_status, quote_id))
-    conn.commit()
-    conn.close()
+    try:
+        # 获取当前报价信息
+        row = conn.execute(
+            "SELECT status, batch_id, quote_quantity FROM quotes WHERE id=?",
+            (quote_id,)
+        ).fetchone()
+        if not row:
+            conn.close()
+            return
+
+        old_status = row[0]
+        batch_id = row[1]
+        quote_quantity = row[2] or 0
+
+        # 从"已出库"变为"已取消"：回补库存 + 清空报价SN
+        if old_status == "已出库" and new_status == "已取消":
+            # 回补库存
+            conn.execute(
+                "UPDATE batches SET remaining = remaining + ? WHERE id = ?",
+                (quote_quantity, batch_id)
+            )
+            # 清空报价SN（SN已回到仓库）
+            conn.execute(
+                "UPDATE quotes SET sn_list = '' WHERE id = ?",
+                (quote_id,)
+            )
+
+        conn.execute("UPDATE quotes SET status=? WHERE id=?", (new_status, quote_id))
+        conn.commit()
+    except Exception as e:
+        conn.rollback()
+        raise e
+    finally:
+        conn.close()
 
 
-def add_payment(quote_id=None, customer_id=None, supplier_id=None, pay_type="receivable",
-                amount=0, pay_date="", method="", remark=""):
-    conn = get_connection()
+def _add_payment_raw(conn, quote_id=None, customer_id=None, supplier_id=None,
+                      pay_type="receivable", amount=0, pay_date="", method="", remark=""):
+    """
+    添加收付款记录的原始操作（不管理连接和事务）
+
+    供批量收款/付款时在同一个事务中调用。
+    外部调用方需自行管理 conn.commit() / conn.rollback() / conn.close()
+    """
     conn.execute(
         "INSERT INTO payments (quote_id, customer_id, supplier_id, type, amount, pay_date, method, remark) "
         "VALUES (?,?,?,?,?,?,?,?)",
         (quote_id, customer_id, supplier_id, pay_type, amount, pay_date, method, remark),
     )
     if quote_id and pay_type == "receivable":
+        # 第一步：更新 received_amount
         conn.execute(
-            "UPDATE quotes SET received_amount = received_amount + ?, paid = CASE WHEN received_amount >= quote_price * quote_quantity THEN '是' ELSE '否' END WHERE id=?",
+            "UPDATE quotes SET received_amount = received_amount + ? WHERE id=?",
             (amount, quote_id),
         )
+        # 第二步：查询新值，基于新值更新 paid 和 status
         row = conn.execute(
-            "SELECT received_amount, quote_price, quote_quantity FROM quotes WHERE id=?", (quote_id,)
+            "SELECT received_amount, quote_price, quote_quantity, status FROM quotes WHERE id=?", (quote_id,)
         ).fetchone()
-        if row and row[0] >= (row[1] * row[2]):
-            conn.execute("UPDATE quotes SET status='已收款' WHERE id=?", (quote_id,))
+        if row:
+            new_received = row[0]
+            total = row[1] * row[2]
+            paid = "是" if new_received >= total else "否"
+            # 状态：收满则变为"已收款"，否则保持原状态（不自动回退）
+            status = row[3]
+            if new_received >= total:
+                status = "已收款"
+            conn.execute(
+                "UPDATE quotes SET paid=?, status=? WHERE id=?",
+                (paid, status, quote_id)
+            )
     if pay_type == "payable" and supplier_id:
         conn.execute(
             "UPDATE suppliers SET balance = balance - ? WHERE id=?", (amount, supplier_id)
         )
-    conn.commit()
-    pid = conn.execute("SELECT last_insert_rowid()").fetchone()[0]
-    conn.close()
-    return pid
+
+
+def add_payment(quote_id=None, customer_id=None, supplier_id=None, pay_type="receivable",
+                amount=0, pay_date="", method="", remark=""):
+    """
+    添加收付款记录（对外接口，自动管理连接和事务）
+    """
+    conn = get_connection()
+    try:
+        _add_payment_raw(conn, quote_id, customer_id, supplier_id, pay_type, amount, pay_date, method, remark)
+        conn.commit()
+        pid = conn.execute("SELECT last_insert_rowid()").fetchone()[0]
+        return pid
+    except Exception as e:
+        conn.rollback()
+        raise e
+    finally:
+        conn.close()
 
 
 def get_payments(quote_id=None, customer_id=None, supplier_id=None):
@@ -833,117 +983,135 @@ def get_all_payments_with_details(pay_type=None, customer_id=None, supplier_id=N
     return [dict(r) for r in rows]
 
 
+def _update_quote_payment_status(conn, quote_id):
+    """
+    根据 quote 的 received_amount 重新计算 paid 和 status
+    内部辅助函数，不管理连接和事务
+    """
+    row = conn.execute(
+        "SELECT received_amount, quote_price, quote_quantity, status, sn_list FROM quotes WHERE id=?",
+        (quote_id,),
+    ).fetchone()
+    if not row:
+        return
+    total_amount = row["quote_price"] * row["quote_quantity"]
+    new_received = row["received_amount"]
+    current_status = row["status"]
+    sn_list = row["sn_list"] or ""
+
+    # 计算 paid
+    paid = "是" if new_received >= total_amount else "否"
+
+    # 计算 status
+    if new_received >= total_amount:
+        new_status = "已收款"
+    elif sn_list:
+        # 有出库SN，说明出过库
+        new_status = "已出库"
+    else:
+        # 没出过库
+        new_status = "待确认"
+
+    # 只有当状态真的需要变时才更新，避免不必要的变更
+    if current_status != new_status or True:  # paid 总是需要更新
+        conn.execute(
+            "UPDATE quotes SET paid=?, status=? WHERE id=?",
+            (paid, new_status, quote_id),
+        )
+
+
 def update_payment(payment_id, new_amount, new_pay_date, new_method, new_remark):
     """修改收付款记录，同步更新关联数据"""
     conn = get_connection()
-    
-    # 获取原记录
-    old_payment = conn.execute("SELECT * FROM payments WHERE id=?", (payment_id,)).fetchone()
-    if not old_payment:
+    try:
+        # 获取原记录
+        old_payment = conn.execute("SELECT * FROM payments WHERE id=?", (payment_id,)).fetchone()
+        if not old_payment:
+            conn.close()
+            return False, "记录不存在"
+
+        old_amount = old_payment["amount"]
+        old_type = old_payment["type"]
+        quote_id = old_payment["quote_id"]
+        supplier_id = old_payment["supplier_id"]
+
+        # 更新 payments 记录
+        conn.execute(
+            "UPDATE payments SET amount=?, pay_date=?, method=?, remark=? WHERE id=?",
+            (new_amount, new_pay_date, new_method, new_remark, payment_id),
+        )
+
+        # 同步更新关联数据
+        amount_diff = new_amount - old_amount
+
+        if old_type == "receivable" and quote_id:
+            # 更新 quotes 的 received_amount
+            conn.execute(
+                "UPDATE quotes SET received_amount = received_amount + ? WHERE id=?",
+                (amount_diff, quote_id),
+            )
+            # 同步更新 paid 和 status
+            _update_quote_payment_status(conn, quote_id)
+
+        elif old_type == "payable" and supplier_id:
+            # 更新 suppliers 的 balance
+            conn.execute(
+                "UPDATE suppliers SET balance = balance - ? WHERE id=?",
+                (amount_diff, supplier_id),
+            )
+
+        conn.commit()
+        return True, "修改成功"
+    except Exception as e:
+        conn.rollback()
+        raise e
+    finally:
         conn.close()
-        return False, "记录不存在"
-    
-    old_amount = old_payment["amount"]
-    old_type = old_payment["type"]
-    quote_id = old_payment["quote_id"]
-    supplier_id = old_payment["supplier_id"]
-    
-    # 更新 payments 记录
-    conn.execute(
-        "UPDATE payments SET amount=?, pay_date=?, method=?, remark=? WHERE id=?",
-        (new_amount, new_pay_date, new_method, new_remark, payment_id),
-    )
-    
-    # 同步更新关联数据
-    amount_diff = new_amount - old_amount
-    
-    if old_type == "receivable" and quote_id:
-        # 更新 quotes 的 received_amount
-        conn.execute(
-            "UPDATE quotes SET received_amount = received_amount + ? WHERE id=?",
-            (amount_diff, quote_id),
-        )
-        # 检查是否需要更新状态
-        row = conn.execute(
-            "SELECT received_amount, quote_price, quote_quantity, status FROM quotes WHERE id=?",
-            (quote_id,),
-        ).fetchone()
-        if row:
-            total_amount = row["quote_price"] * row["quote_quantity"]
-            new_received = row["received_amount"]
-            current_status = row["status"]
-            # 如果收款完成且状态不是已收款，更新为已收款
-            if new_received >= total_amount and current_status != "已收款":
-                conn.execute("UPDATE quotes SET status='已收款' WHERE id=?", (quote_id,))
-            # 如果收款未完成且状态是已收款，需要回退状态
-            elif new_received < total_amount and current_status == "已收款":
-                # 根据是否有出库记录判断状态
-                conn.execute("UPDATE quotes SET status='已出库' WHERE id=?", (quote_id,))
-    
-    elif old_type == "payable" and supplier_id:
-        # 更新 suppliers 的 balance
-        conn.execute(
-            "UPDATE suppliers SET balance = balance - ? WHERE id=?",
-            (amount_diff, supplier_id),
-        )
-    
-    conn.commit()
-    conn.close()
-    return True, "修改成功"
 
 
 def delete_payment(payment_id):
     """删除收付款记录，回滚关联数据"""
     conn = get_connection()
-    
-    # 获取原记录
-    old_payment = conn.execute("SELECT * FROM payments WHERE id=?", (payment_id,)).fetchone()
-    if not old_payment:
+    try:
+        # 获取原记录
+        old_payment = conn.execute("SELECT * FROM payments WHERE id=?", (payment_id,)).fetchone()
+        if not old_payment:
+            conn.close()
+            return False, "记录不存在", {}
+
+        old_amount = old_payment["amount"]
+        old_type = old_payment["type"]
+        quote_id = old_payment["quote_id"]
+        supplier_id = old_payment["supplier_id"]
+        customer_id = old_payment["customer_id"]
+        pay_date = old_payment["pay_date"]
+
+        # 删除 payments 记录
+        conn.execute("DELETE FROM payments WHERE id=?", (payment_id,))
+
+        # 回滚关联数据
+        affected = {"quote_id": quote_id, "supplier_id": supplier_id, "customer_id": customer_id}
+
+        if old_type == "receivable" and quote_id:
+            # 回滚 quotes 的 received_amount
+            conn.execute(
+                "UPDATE quotes SET received_amount = received_amount - ? WHERE id=?",
+                (old_amount, quote_id),
+            )
+            # 同步更新 paid 和 status
+            _update_quote_payment_status(conn, quote_id)
+
+        elif old_type == "payable" and supplier_id:
+            # 回滚 suppliers 的 balance（删除付款记录意味着欠款增加）
+            conn.execute(
+                "UPDATE suppliers SET balance = balance + ? WHERE id=?",
+                (old_amount, supplier_id),
+            )
+
+        conn.commit()
+        return True, "删除成功", affected
+    except Exception as e:
+        conn.rollback()
+        raise e
+    finally:
         conn.close()
-        return False, "记录不存在", {}
-    
-    old_amount = old_payment["amount"]
-    old_type = old_payment["type"]
-    quote_id = old_payment["quote_id"]
-    supplier_id = old_payment["supplier_id"]
-    customer_id = old_payment["customer_id"]
-    pay_date = old_payment["pay_date"]
-    
-    # 删除 payments 记录
-    conn.execute("DELETE FROM payments WHERE id=?", (payment_id,))
-    
-    # 回滚关联数据
-    affected = {"quote_id": quote_id, "supplier_id": supplier_id, "customer_id": customer_id}
-    
-    if old_type == "receivable" and quote_id:
-        # 回滚 quotes 的 received_amount
-        conn.execute(
-            "UPDATE quotes SET received_amount = received_amount - ? WHERE id=?",
-            (old_amount, quote_id),
-        )
-        # 检查是否需要回退状态
-        row = conn.execute(
-            "SELECT received_amount, quote_price, quote_quantity, status FROM quotes WHERE id=?",
-            (quote_id,),
-        ).fetchone()
-        if row:
-            total_amount = row["quote_price"] * row["quote_quantity"]
-            new_received = row["received_amount"]
-            current_status = row["status"]
-            # 如果收款未完成且状态是已收款，回退状态
-            if new_received < total_amount and current_status == "已收款":
-                conn.execute("UPDATE quotes SET status='已出库' WHERE id=?", (quote_id,))
-            # 更新 paid 字段
-            if new_received <= 0:
-                conn.execute("UPDATE quotes SET paid='否' WHERE id=?", (quote_id,))
-    
-    elif old_type == "payable" and supplier_id:
-        # 回滚 suppliers 的 balance（删除付款记录意味着欠款增加）
-        conn.execute(
-            "UPDATE suppliers SET balance = balance + ? WHERE id=?",
-            (old_amount, supplier_id),
-        )
-    
-    conn.commit()
-    conn.close()
-    return True, "删除成功", affected

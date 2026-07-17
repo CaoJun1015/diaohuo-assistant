@@ -27,10 +27,11 @@ from src.models.database import (
     add_customer, search_customers, get_all_customers,
     add_supplier, search_suppliers, get_all_suppliers,
     add_quote, update_quote, delete_quote, search_quotes, export_quotes, get_quote_by_id,
-    update_quote_status, add_payment, get_payments, get_customer_balance,
+    update_quote_status, add_payment, _add_payment_raw, get_payments, get_customer_balance,
     get_supplier_payable, get_customer_statement, deduct_batch_remaining,
     delete_customer_cascade, delete_supplier_cascade,
     get_payment_by_id, get_all_payments_with_details, update_payment, delete_payment,
+    get_connection,
 )
 from src.utils.word_parser import parse_word_pricelist, preview_parse
 from src.utils.image_gen import generate_quote_image, generate_single_quote_card, WATERMARK_TEXT
@@ -1094,7 +1095,7 @@ class QuotePanel(QWidget):
 class MainWindow(QMainWindow):
     def __init__(self):
         super().__init__()
-        self.setWindowTitle("调货助手 v1.07")
+        self.setWindowTitle("调货助手 v1.08")
         self.setMinimumSize(1100, 700)
         self.setStyleSheet(APP_STYLE)
 
@@ -1307,14 +1308,11 @@ class MainWindow(QMainWindow):
                     conn.close()
                     return
                 conn.execute("UPDATE batches SET remaining=? WHERE id=?", (current_remaining - quote_quantity, data["batch_id"]))
-                # 追加SN到批次
-                if data.get("sn_list"):
-                    existing_sn = conn.execute("SELECT sn_list FROM batches WHERE id=?", (data["batch_id"],)).fetchone()
-                    new_sn = data["sn_list"]
-                    if existing_sn and existing_sn[0]:
-                        new_sn = existing_sn[0] + "," + new_sn if existing_sn[0] else new_sn
-                    conn.execute("UPDATE batches SET sn_list=? WHERE id=?", (new_sn, data["batch_id"]))
-                conn.execute("UPDATE quotes SET status='已出库' WHERE id=?", (quote_id,))
+                # 保存出库SN到报价记录，不再修改批次SN（批次SN记录入库时的SN，不应被出库修改）
+                conn.execute(
+                    "UPDATE quotes SET status='已出库', sn_list=? WHERE id=?",
+                    (data.get("sn_list", ""), quote_id)
+                )
                 conn.commit()
                 QMessageBox.information(self, "成功", "出库成功！")
             except Exception as e:
@@ -1797,24 +1795,34 @@ class MainWindow(QMainWindow):
             if reply != QMessageBox.StandardButton.Yes:
                 return
 
-            remaining = data["amount"]
-            for q in unpaid:
-                if remaining <= 0:
-                    break
-                qid, _, _, _, pending = q
-                apply_amount = min(remaining, pending)
-                add_payment(
-                    quote_id=qid,
-                    customer_id=customer_id,
-                    pay_type="receivable",
-                    amount=apply_amount,
-                    pay_date=data["pay_date"],
-                    method=data["method"],
-                    remark=data["remark"],
-                )
-                remaining -= apply_amount
-
-            QMessageBox.information(self, "成功", f"收款 ¥{data['amount']:.2f} 已记录！")
+            # 批量收款在同一个事务中执行，保证原子性
+            conn = get_connection()
+            try:
+                remaining = data["amount"]
+                for q in unpaid:
+                    if remaining <= 0:
+                        break
+                    qid, _, _, _, pending = q
+                    apply_amount = min(remaining, pending)
+                    _add_payment_raw(
+                        conn,
+                        quote_id=qid,
+                        customer_id=customer_id,
+                        pay_type="receivable",
+                        amount=apply_amount,
+                        pay_date=data["pay_date"],
+                        method=data["method"],
+                        remark=data["remark"],
+                    )
+                    remaining -= apply_amount
+                conn.commit()
+                QMessageBox.information(self, "成功", f"收款 ¥{data['amount']:.2f} 已记录！")
+            except Exception as e:
+                conn.rollback()
+                QMessageBox.critical(self, "收款失败", f"收款操作失败: {str(e)}")
+                return
+            finally:
+                conn.close()
             self.refresh_finance()
             self.refresh_records()
 
