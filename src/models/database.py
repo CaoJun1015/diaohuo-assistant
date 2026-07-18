@@ -683,14 +683,80 @@ def export_quotes(date_from="", date_to="", customer_id=None):
     return search_quotes("", date_from, date_to, customer_id)
 
 
+# 合法状态流转表
+VALID_TRANSITIONS = {
+    "待确认": ["已报价", "已取消"],
+    "已报价": ["已出库", "已取消"],
+    "已出库": ["已收款", "已取消"],
+    "已收款": [],
+    "已取消": [],
+}
+
+
+def ship_quote(quote_id, sn_list=""):
+    """
+    出库操作（封装校验+扣减+保存SN+状态更新）
+
+    步骤：
+    1. 校验报价是否存在
+    2. 校验状态是否允许出库（待确认/已报价）
+    3. 校验库存是否充足
+    4. 扣减 batches.remaining
+    5. 保存 SN 到 quotes.sn_list
+    6. 更新状态为"已出库"
+
+    返回 (True, "出库成功") 或 (False, 错误信息)
+    """
+    conn = get_connection()
+    try:
+        row = conn.execute(
+            "SELECT status, batch_id, quote_quantity FROM quotes WHERE id=?",
+            (quote_id,)
+        ).fetchone()
+        if not row:
+            return False, "报价记录不存在"
+
+        old_status = row[0]
+        batch_id = row[1]
+        quote_quantity = row[2] or 0
+
+        # 校验状态
+        if old_status not in ("待确认", "已报价"):
+            return False, f"当前状态「{old_status}」不允许出库"
+
+        # 校验库存
+        batch_row = conn.execute(
+            "SELECT remaining FROM batches WHERE id=?", (batch_id,)
+        ).fetchone()
+        if not batch_row or batch_row[0] < quote_quantity:
+            return False, "库存不足，无法出库"
+
+        # 执行出库
+        conn.execute(
+            "UPDATE batches SET remaining = remaining - ? WHERE id = ?",
+            (quote_quantity, batch_id)
+        )
+        conn.execute(
+            "UPDATE quotes SET status='已出库', sn_list=? WHERE id=?",
+            (sn_list, quote_id)
+        )
+        conn.commit()
+        return True, "出库成功"
+    except Exception as e:
+        conn.rollback()
+        return False, f"出库失败: {str(e)}"
+    finally:
+        conn.close()
+
+
 def update_quote_status(quote_id, new_status):
     """
-    更新报价状态
+    更新报价状态（带状态机守卫）
 
     特殊处理：
-    - 从"已出库"变为"已取消"时，回补库存（将数量加回批次剩余）
-    - 清空 quotes.sn_list（出库SN已回到仓库）
-    - 注意：出库时 SN 保存到 quotes.sn_list，batches.sn_list 不被修改
+    - 校验状态流转合法性，非法跳转返回 (False, 错误信息)
+    - 从"已出库"变为"已取消"时，回补库存 + 清空报价SN
+    - 返回 (True, "状态更新成功") 或 (False, 错误信息)
     """
     conn = get_connection()
     try:
@@ -700,21 +766,22 @@ def update_quote_status(quote_id, new_status):
             (quote_id,)
         ).fetchone()
         if not row:
-            conn.close()
-            return
+            return False, "报价记录不存在"
 
         old_status = row[0]
         batch_id = row[1]
         quote_quantity = row[2] or 0
 
+        # 校验状态流转合法性
+        if new_status not in VALID_TRANSITIONS.get(old_status, []):
+            return False, f"不允许从「{old_status}」变更为「{new_status}」"
+
         # 从"已出库"变为"已取消"：回补库存 + 清空报价SN
         if old_status == "已出库" and new_status == "已取消":
-            # 回补库存
             conn.execute(
                 "UPDATE batches SET remaining = remaining + ? WHERE id = ?",
                 (quote_quantity, batch_id)
             )
-            # 清空报价SN（SN已回到仓库）
             conn.execute(
                 "UPDATE quotes SET sn_list = '' WHERE id = ?",
                 (quote_id,)
@@ -722,6 +789,7 @@ def update_quote_status(quote_id, new_status):
 
         conn.execute("UPDATE quotes SET status=? WHERE id=?", (new_status, quote_id))
         conn.commit()
+        return True, "状态更新成功"
     except Exception as e:
         conn.rollback()
         raise e
@@ -909,11 +977,11 @@ def get_customer_stats(customer_id):
     row = conn.execute(
         """
         SELECT COUNT(*) as total_quotes, 
-               SUM(q.quote_price * q.quote_quantity) as total_amount,
-               SUM((q.quote_price - b.purchase_price) * q.quote_quantity) as total_profit
+               COALESCE(SUM(q.quote_price * q.quote_quantity), 0) as total_amount,
+               COALESCE(SUM((q.quote_price - b.purchase_price) * q.quote_quantity), 0) as total_profit
         FROM quotes q
         JOIN batches b ON q.batch_id = b.id
-        WHERE q.customer_id = ?
+        WHERE q.customer_id = ? AND q.status != '已取消'
         """,
         (customer_id,),
     ).fetchone()
@@ -1005,18 +1073,22 @@ def _update_quote_payment_status(conn, quote_id):
     # 计算 status
     if new_received >= total_amount:
         new_status = "已收款"
-    elif sn_list:
-        # 有出库SN，说明出过库
-        new_status = "已出库"
+    elif current_status == "已收款":
+        # 从已收款回退，根据 sn_list 判断
+        new_status = "已出库" if sn_list else "待确认"
     else:
-        # 没出过库
-        new_status = "待确认"
+        # 未收满且不是从已收款回退，保持当前状态不变
+        new_status = current_status
 
-    # 只有当状态真的需要变时才更新，避免不必要的变更
-    if current_status != new_status or True:  # paid 总是需要更新
+    # paid 总是需要更新，status 只在变化时更新
+    conn.execute(
+        "UPDATE quotes SET paid=? WHERE id=?",
+        (paid, quote_id),
+    )
+    if current_status != new_status:
         conn.execute(
-            "UPDATE quotes SET paid=?, status=? WHERE id=?",
-            (paid, new_status, quote_id),
+            "UPDATE quotes SET status=? WHERE id=?",
+            (new_status, quote_id),
         )
 
 

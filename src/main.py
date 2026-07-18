@@ -31,7 +31,7 @@ from src.models.database import (
     get_supplier_payable, get_customer_statement, deduct_batch_remaining,
     delete_customer_cascade, delete_supplier_cascade,
     get_payment_by_id, get_all_payments_with_details, update_payment, delete_payment,
-    get_connection,
+    get_connection, ship_quote,
 )
 from src.utils.word_parser import parse_word_pricelist, preview_parse
 from src.utils.image_gen import generate_quote_image, generate_single_quote_card, WATERMARK_TEXT
@@ -1095,7 +1095,7 @@ class QuotePanel(QWidget):
 class MainWindow(QMainWindow):
     def __init__(self):
         super().__init__()
-        self.setWindowTitle("调货助手 v1.08")
+        self.setWindowTitle("调货助手 v1.09")
         self.setMinimumSize(1100, 700)
         self.setStyleSheet(APP_STYLE)
 
@@ -1291,36 +1291,13 @@ class MainWindow(QMainWindow):
         dlg = ShipmentDialog(self, quote, batches)
         if dlg.exec():
             data = dlg.get_data()
-            from src.models.database import get_connection
-            conn = get_connection()
-            try:
-                # 在事务中扣减库存
-                cur = conn.execute("SELECT remaining FROM batches WHERE id=?", (data["batch_id"],))
-                batch_row = cur.fetchone()
-                if not batch_row:
-                    QMessageBox.warning(self, "出库失败", "批次不存在")
-                    conn.close()
-                    return
-                current_remaining = batch_row[0]
-                quote_quantity = quote.get("quote_quantity", 1) or 1
-                if current_remaining < quote_quantity:
-                    QMessageBox.warning(self, "库存不足", f"当前剩余 {current_remaining} 台，需要 {quote_quantity} 台")
-                    conn.close()
-                    return
-                conn.execute("UPDATE batches SET remaining=? WHERE id=?", (current_remaining - quote_quantity, data["batch_id"]))
-                # 保存出库SN到报价记录，不再修改批次SN（批次SN记录入库时的SN，不应被出库修改）
-                conn.execute(
-                    "UPDATE quotes SET status='已出库', sn_list=? WHERE id=?",
-                    (data.get("sn_list", ""), quote_id)
-                )
-                conn.commit()
-                QMessageBox.information(self, "成功", "出库成功！")
-            except Exception as e:
-                conn.rollback()
-                QMessageBox.critical(self, "出库失败", f"出库操作失败: {str(e)}")
-            finally:
-                conn.close()
-            self.refresh_records()
+            # 使用封装好的 ship_quote 函数（含校验+扣减+保存SN+状态更新）
+            success, msg = ship_quote(quote_id, data.get("sn_list", ""))
+            if success:
+                QMessageBox.information(self, "成功", msg)
+                self.refresh_records()
+            else:
+                QMessageBox.warning(self, "出库失败", msg)
 
     def on_receive_payment(self):
         row = self.record_table.currentRow()
