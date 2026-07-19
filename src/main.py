@@ -1090,22 +1090,64 @@ class QuotePanel(QWidget):
 
 
 # ============================================================
+# 操作日志对话框
+# ============================================================
+class OperationLogDialog(QDialog):
+    def __init__(self, parent=None):
+        super().__init__(parent)
+        self.setWindowTitle("最近操作记录")
+        self.setMinimumSize(700, 400)
+        layout = QVBoxLayout(self)
+
+        self.table = QTableWidget()
+        self.table.setColumnCount(4)
+        self.table.setHorizontalHeaderLabels(["时间", "操作", "对象", "描述"])
+        self.table.setSelectionBehavior(QAbstractItemView.SelectionBehavior.SelectRows)
+        self.table.setEditTriggers(QAbstractItemView.EditTrigger.NoEditTriggers)
+        self.table.horizontalHeader().setStretchLastSection(True)
+        self.table.setSortingEnabled(True)
+
+        layout.addWidget(self.table)
+
+        btn_row = QHBoxLayout()
+        btn_row.addStretch()
+        refresh_btn = QPushButton("刷新")
+        refresh_btn.clicked.connect(self.load_logs)
+        btn_row.addWidget(refresh_btn)
+        close_btn = QPushButton("关闭")
+        close_btn.clicked.connect(self.close)
+        btn_row.addWidget(close_btn)
+        layout.addLayout(btn_row)
+
+        self.load_logs()
+
+    def load_logs(self):
+        from src.models.database import get_operation_logs
+        logs = get_operation_logs(limit=50)
+        self.table.setRowCount(len(logs))
+        for i, log in enumerate(logs):
+            self.table.setItem(i, 0, QTableWidgetItem(log.get("created_at", "")))
+            self.table.setItem(i, 1, QTableWidgetItem(log.get("operation", "")))
+            self.table.setItem(i, 2, QTableWidgetItem(
+                f"{log.get('table_name', '')}(ID:{log.get('record_id', '')})"
+            ))
+            self.table.setItem(i, 3, QTableWidgetItem(log.get("description", "")))
+        self.table.resizeColumnsToContents()
+
+
+# ============================================================
 # 主窗口
 # ============================================================
 class MainWindow(QMainWindow):
     def __init__(self):
         super().__init__()
-        self.setWindowTitle("调货助手 v1.09")
+        self.setWindowTitle("调货助手 v1.10")
         self.setMinimumSize(1100, 700)
         self.setStyleSheet(APP_STYLE)
 
-        # 初始化数据库
-        init_db()
-        
-        # 自动备份
-        from src.models.database import backup_database
-        backup_success, backup_msg = backup_database()
-        self.backup_status = backup_msg
+        # 初始化数据库（含自动备份 + 完整性检查）
+        init_ok, init_msg = init_db()
+        self.backup_status = init_msg
 
         # 中心控件
         central = QWidget()
@@ -1130,6 +1172,8 @@ class MainWindow(QMainWindow):
         self.export_json_btn.clicked.connect(self.on_export_json)
         self.import_json_btn = QPushButton("JSON导入")
         self.import_json_btn.clicked.connect(self.on_import_json)
+        self.log_btn = QPushButton("操作日志")
+        self.log_btn.clicked.connect(self.on_show_logs)
         self.statement_btn = QPushButton("对账单")
         self.statement_btn.clicked.connect(self.on_statement)
         self.follow_up_btn = QPushButton("🔔 跟单提醒")
@@ -1160,6 +1204,7 @@ class MainWindow(QMainWindow):
         top_bar.addWidget(self.statement_btn)
         top_bar.addWidget(self.export_json_btn)
         top_bar.addWidget(self.import_json_btn)
+        top_bar.addWidget(self.log_btn)
         main_layout.addLayout(top_bar)
 
         # Tab 页面
@@ -1241,6 +1286,10 @@ class MainWindow(QMainWindow):
         self.refresh_customer_list()
         self.refresh_supplier_list()
         self.refresh_records()
+
+        # 启用所有表格的列头排序
+        for table in self.findChildren(QTableWidget):
+            table.setSortingEnabled(True)
 
     def on_confirm_quote(self):
         row = self.record_table.currentRow()
@@ -2412,6 +2461,21 @@ class MainWindow(QMainWindow):
             total_cost += (q.get("purchase_price", 0) or 0) * quote_quantity
             total_sale += quote_price * quote_quantity
 
+            # 收款提醒：已出库超过7天未收满的订单，整行红色高亮
+            if status == "已出库" and received < total_amount and total_amount > 0:
+                from datetime import date, datetime
+                quote_date = q.get("quote_date", "")
+                if quote_date:
+                    try:
+                        quote_dt = datetime.strptime(quote_date, "%Y-%m-%d").date()
+                        if (date.today() - quote_dt).days > 7:
+                            for col in range(self.record_table.columnCount()):
+                                item = self.record_table.item(i, col)
+                                if item:
+                                    item.setForeground(QColor("#D32F2F"))
+                    except ValueError:
+                        pass
+
         self.record_table.resizeColumnsToContents()
         self.record_table.setColumnWidth(12, 70)
         self.record_table.setColumnWidth(13, 80)
@@ -3113,9 +3177,14 @@ class MainWindow(QMainWindow):
             else:
                 QMessageBox.critical(self, "导入失败", message)
 
+    def on_show_logs(self):
+        """显示操作日志"""
+        dlg = OperationLogDialog(self)
+        dlg.exec()
+
 
 # ============================================================
-# 入口
+# 程序入口
 # ============================================================
 def main():
     app = QApplication(sys.argv)

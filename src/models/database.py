@@ -260,6 +260,11 @@ def init_db():
     conn.commit()
     conn.close()
 
+    # 启动时自动备份
+    backup_database()
+
+    return True, "数据库初始化成功"
+
 
 # ---------- 机型管理 ----------
 
@@ -324,13 +329,15 @@ def delete_product(pid):
 
 def search_products(keyword):
     conn = get_connection()
-    kw = f"%{keyword}%"
+    like = f"%{keyword}%"
     rows = conn.execute(
-        """SELECT id, series, cpu, ram, storage, gpu, screen, note
-           FROM products
-           WHERE series LIKE ? OR cpu LIKE ? OR note LIKE ?
-           ORDER BY series, cpu""",
-        (kw, kw, kw),
+        """
+        SELECT id, series, cpu, ram, storage, gpu, screen, note
+        FROM products
+        WHERE series LIKE ? OR cpu LIKE ? OR ram LIKE ? OR storage LIKE ? OR gpu LIKE ? OR screen LIKE ? OR note LIKE ?
+        ORDER BY series, cpu
+        """,
+        (like, like, like, like, like, like, like),
     ).fetchall()
     conn.close()
     return [dict(r) for r in rows]
@@ -477,8 +484,8 @@ def search_customers(keyword):
     conn = get_connection()
     kw = f"%{keyword}%"
     rows = conn.execute(
-        "SELECT id, name, wechat, qq, phone, note FROM customers WHERE name LIKE ? ORDER BY name",
-        (kw,),
+        "SELECT id, name, wechat, qq, phone, note FROM customers WHERE name LIKE ? OR wechat LIKE ? OR qq LIKE ? OR phone LIKE ? OR note LIKE ? ORDER BY name",
+        (kw, kw, kw, kw, kw),
     ).fetchall()
     conn.close()
     return [dict(r) for r in rows]
@@ -511,8 +518,8 @@ def search_suppliers(keyword):
     conn = get_connection()
     kw = f"%{keyword}%"
     rows = conn.execute(
-        "SELECT id, name, wechat, qq, phone, note FROM suppliers WHERE name LIKE ? ORDER BY name",
-        (kw,),
+        "SELECT id, name, wechat, qq, phone, note FROM suppliers WHERE name LIKE ? OR wechat LIKE ? OR qq LIKE ? OR phone LIKE ? OR note LIKE ? ORDER BY name",
+        (kw, kw, kw, kw, kw),
     ).fetchall()
     conn.close()
     return [dict(r) for r in rows]
