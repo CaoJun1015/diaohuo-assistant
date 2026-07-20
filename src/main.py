@@ -11,7 +11,7 @@ from PyQt6.QtWidgets import (
     QPushButton, QLineEdit, QLabel, QComboBox, QTextEdit,
     QMessageBox, QFileDialog, QDialog, QFormLayout,
     QSpinBox, QDateEdit, QDialogButtonBox,
-    QHeaderView, QAbstractItemView, QCheckBox, QGroupBox,
+    QFrame, QHeaderView, QAbstractItemView, QCheckBox, QGroupBox,
     QGridLayout, QMenu, QMenuBar, QStatusBar,
 )
 from PyQt6.QtCore import Qt, QDate
@@ -31,7 +31,7 @@ from src.models.database import (
     get_supplier_payable, get_customer_statement, deduct_batch_remaining,
     delete_customer_cascade, delete_supplier_cascade,
     get_payment_by_id, get_all_payments_with_details, update_payment, delete_payment,
-    get_connection, ship_quote,
+    get_connection, ship_quote, add_operation_log,
 )
 from src.utils.word_parser import parse_word_pricelist, preview_parse
 from src.utils.image_gen import generate_quote_image, generate_single_quote_card, WATERMARK_TEXT
@@ -55,10 +55,11 @@ class ShipmentDialog(QDialog):
         self.setWindowTitle("确认出库")
         self.setMinimumWidth(450)
         layout = QFormLayout(self)
+        layout.setContentsMargins(16, 16, 16, 16)
 
         info_text = f"机型: {quote.get('series','')} {quote.get('cpu','')}\n客户: {quote.get('customer_name','')}\n数量: {quote.get('quote_quantity',1)} 台"
         self.info_label = QLabel(info_text)
-        self.info_label.setStyleSheet("font-size: 14px; font-weight: bold; padding: 8px;")
+        self.info_label.setObjectName("dialogInfoLabel")
         layout.addRow(self.info_label)
 
         self.batch_combo = QComboBox()
@@ -145,6 +146,7 @@ class PaymentDialog(QDialog):
         self.setWindowTitle(title)
         self.setMinimumWidth(400)
         layout = QFormLayout(self)
+        layout.setContentsMargins(16, 16, 16, 16)
 
         if quote:
             total_amount = (quote.get("quote_price", 0) or 0) * (quote.get("quote_quantity", 1) or 1)
@@ -152,12 +154,12 @@ class PaymentDialog(QDialog):
             remaining = total_amount - received
             info = f"客户: {quote.get('customer_name','')} | 总金额: ¥{total_amount:.0f} | 已收: ¥{received:.0f} | 待收: ¥{remaining:.0f}"
             info_label = QLabel(info)
-            info_label.setStyleSheet("font-weight: bold; padding: 4px;")
+            info_label.setObjectName("dialogInfoLabel")
             layout.addRow(info_label)
 
         if preview_pending:
             info_label = QLabel(f"当前待收金额: ¥{preview_pending:.0f}")
-            info_label.setStyleSheet("font-weight: bold; color: #D32F2F; padding: 4px;")
+            info_label.setObjectName("dangerSummaryLabel")
             layout.addRow(info_label)
 
         self.amount_spin = QSpinBox()
@@ -203,13 +205,14 @@ class PaymentEditDialog(QDialog):
         self.setWindowTitle("编辑收付款记录")
         self.setMinimumWidth(400)
         layout = QFormLayout(self)
+        layout.setContentsMargins(16, 16, 16, 16)
 
         # 显示原记录信息
         type_text = "收款" if payment.get("type") == "receivable" else "付款"
         obj_name = payment.get("customer_name", "") or payment.get("supplier_name", "")
         info = f"类型: {type_text} | 关联对象: {obj_name}"
         info_label = QLabel(info)
-        info_label.setStyleSheet("font-weight: bold; padding: 4px;")
+        info_label.setObjectName("dialogInfoLabel")
         layout.addRow(info_label)
 
         self.amount_spin = QSpinBox()
@@ -265,6 +268,7 @@ class StatementDialog(QDialog):
         self.setWindowTitle("客户对账单")
         self.setMinimumSize(800, 550)
         layout = QVBoxLayout(self)
+        layout.setContentsMargins(16, 16, 16, 16)
 
         top_row = QHBoxLayout()
         top_row.addWidget(QLabel("客户:"))
@@ -290,21 +294,23 @@ class StatementDialog(QDialog):
         top_row.addWidget(self.date_to)
 
         self.query_btn = QPushButton("查询")
+        self.query_btn.setObjectName("ghostBtn")
         self.query_btn.clicked.connect(self._query)
         top_row.addWidget(self.query_btn)
 
         self.export_btn = QPushButton("导出 Excel")
-        self.export_btn.setStyleSheet("background-color: #388E3C; color: white;")
+        self.export_btn.setObjectName("successBtn")
         self.export_btn.clicked.connect(self._export_excel)
         top_row.addWidget(self.export_btn)
 
         layout.addLayout(top_row)
 
         self.summary_label = QLabel()
-        self.summary_label.setStyleSheet("font-weight: bold; font-size: 14px; padding: 8px;")
+        self.summary_label.setObjectName("summaryLabel")
         layout.addWidget(self.summary_label)
 
         self.statement_table = QTableWidget()
+        self.statement_table.setAlternatingRowColors(True)
         self.statement_table.setColumnCount(11)
         self.statement_table.setHorizontalHeaderLabels(
             ["日期", "机型", "CPU", "数量", "购入价", "报价", "毛利", "状态", "已收款", "待收款", "备注"]
@@ -467,44 +473,167 @@ def export_statement_to_excel(records, customer_name):
 # 样式表
 # ============================================================
 APP_STYLE = """
-QMainWindow { background-color: #F0F2F5; }
-QTableWidget {
-    gridline-color: #E0E0E0; font-size: 13px;
-    selection-background-color: #E3F2FD;
-    selection-color: #333;
-}
-QTableWidget::item { padding: 4px; }
-QHeaderView::section {
-    background-color: #1976D2; color: white; font-weight: bold;
-    padding: 6px; border: none; font-size: 13px;
-}
-QPushButton {
-    background-color: #1976D2; color: white; border: none;
-    padding: 6px 16px; border-radius: 4px; font-size: 13px;
-}
-QPushButton:hover { background-color: #1565C0; }
-QPushButton:pressed { background-color: #0D47A1; }
-QPushButton.blue { background-color: #1976D2; }
-QPushButton.orange { background-color: #F57C00; }
-QPushButton.orange:hover { background-color: #E65100; }
-QPushButton.green { background-color: #388E3C; }
-QPushButton.green:hover { background-color: #2E7D32; }
-QPushButton.red { background-color: #D32F2F; }
-QPushButton.red:hover { background-color: #B71C1C; }
+/* ---- 全局基础 ---- */
+QMainWindow { background-color: #F8FAFC; }
+QWidget { font-family: 'Microsoft YaHei', 'Segoe UI', sans-serif; font-size: 13px; color: #1E293B; }
+
+/* ---- 输入控件 ---- */
 QLineEdit, QComboBox, QSpinBox, QDateEdit {
-    padding: 6px; border: 1px solid #BDBDBD; border-radius: 4px;
+    padding: 7px 12px;
+    border: 1px solid #E2E8F0;
+    border-radius: 6px;
+    background: #FFFFFF;
+    color: #1E293B;
     font-size: 13px;
+    selection-background-color: #DBEAFE;
 }
-QTabWidget::pane { border: 1px solid #BDBDBD; background: white; }
+QLineEdit:focus, QComboBox:focus, QSpinBox:focus, QDateEdit:focus { border-color: #3B82F6; }
+QComboBox::drop-down { border: none; width: 24px; }
+QComboBox::down-arrow {
+    width: 10px; height: 10px; image: none;
+    border-left: 4px solid transparent;
+    border-right: 4px solid transparent;
+    border-top: 5px solid #64748B;
+    margin-right: 6px;
+}
+QTextEdit {
+    padding: 8px 12px; border: 1px solid #E2E8F0;
+    border-radius: 6px; background: #FFFFFF;
+    font-size: 13px; selection-background-color: #DBEAFE;
+}
+
+/* ---- 按钮基础 ---- */
+QPushButton {
+    padding: 6px 16px; border-radius: 6px;
+    border: 1px solid #E2E8F0; background: #FFFFFF;
+    color: #1E293B; font-size: 13px;
+}
+QPushButton:hover { background: #F1F5F9; border-color: #CBD5E1; }
+QPushButton:pressed { background: #E2E8F0; }
+QPushButton:disabled { color: #94A3B8; background: #F1F5F9; border-color: #E2E8F0; }
+
+/* Primary */
+QPushButton#primaryBtn { background: #3B82F6; color: #FFFFFF; border: 1px solid #3B82F6; }
+QPushButton#primaryBtn:hover { background: #2563EB; border-color: #2563EB; }
+QPushButton#primaryBtn:pressed { background: #1D4ED8; }
+
+/* Success */
+QPushButton#successBtn { background: #F0FDF4; color: #16A34A; border: 1px solid #BBF7D0; }
+QPushButton#successBtn:hover { background: #DCFCE7; border-color: #86EFAC; }
+QPushButton#successBtn:pressed { background: #BBF7D0; }
+
+/* Warning */
+QPushButton#warningBtn { background: #FFFBEB; color: #D97706; border: 1px solid #FDE68A; }
+QPushButton#warningBtn:hover { background: #FEF3C7; border-color: #FCD34D; }
+QPushButton#warningBtn:pressed { background: #FDE68A; }
+
+/* Danger */
+QPushButton#dangerBtn { background: #FEF2F2; color: #DC2626; border: 1px solid #FECACA; }
+QPushButton#dangerBtn:hover { background: #FEE2E2; border-color: #FCA5A5; }
+QPushButton#dangerBtn:pressed { background: #FECACA; }
+
+/* Ghost */
+QPushButton#ghostBtn { background: transparent; border: 1px solid #E2E8F0; color: #475569; }
+QPushButton#ghostBtn:hover { background: #F8FAFC; border-color: #CBD5E1; color: #1E293B; }
+QPushButton#ghostBtn:pressed { background: #F1F5F9; }
+
+/* 表内操作按钮 */
+QPushButton#tableActionPrimary {
+    background: #EFF6FF; color: #2563EB; border: none;
+    padding: 4px 12px; font-size: 12px; border-radius: 4px;
+}
+QPushButton#tableActionPrimary:hover { background: #DBEAFE; }
+QPushButton#tableActionOrange {
+    background: #FFFBEB; color: #D97706; border: none;
+    padding: 4px 12px; font-size: 12px; border-radius: 4px;
+}
+QPushButton#tableActionOrange:hover { background: #FEF3C7; }
+QPushButton#tableActionDanger {
+    background: #FEF2F2; color: #DC2626; border: none;
+    padding: 4px 12px; font-size: 12px; border-radius: 4px;
+}
+QPushButton#tableActionDanger:hover { background: #FEE2E2; }
+
+/* 诊断选项按钮 */
+QPushButton#diagnoseOptionBtn {
+    text-align: left; padding: 8px 16px; font-size: 13px;
+    border: 1px solid #E2E8F0; border-radius: 6px; background: #FFFFFF;
+}
+QPushButton#diagnoseOptionBtn:hover { background: #F1F5F9; border-color: #CBD5E1; }
+
+/* ---- 表格 ---- */
+QTableWidget {
+    background: #FFFFFF; border: 1px solid #E2E8F0; border-radius: 8px;
+    gridline-color: #F1F5F9; font-size: 13px;
+    selection-background-color: #EFF6FF; selection-color: #1E293B;
+    alternate-background-color: #F8FAFC;
+}
+QHeaderView::section {
+    background: #F8FAFC; color: #64748B; font-weight: 600;
+    font-size: 12px; padding: 8px 12px;
+    border: none; border-bottom: 2px solid #E2E8F0;
+}
+
+/* ---- Tab ---- */
+QTabWidget::pane {
+    border: 1px solid #E2E8F0; border-radius: 0 0 8px 8px;
+    background: #FFFFFF; padding: 0px;
+}
 QTabBar::tab {
-    background: #E0E0E0; padding: 8px 20px; font-size: 13px;
-    border: 1px solid #BDBDBD; border-bottom: none;
-    border-top-left-radius: 4px; border-top-right-radius: 4px;
+    background: transparent; color: #64748B; padding: 10px 24px;
+    font-size: 13px; font-weight: 500; border: none;
+    border-bottom: 2px solid transparent; margin-right: 2px;
 }
-QTabBar::tab:selected { background: white; font-weight: bold; }
-QGroupBox { font-weight: bold; border: 1px solid #BDBDBD; border-radius: 4px; margin-top: 10px; padding-top: 10px; }
-QGroupBox::title { subcontrol-origin: margin; left: 10px; padding: 0 5px; }
-QStatusBar { background: #E0E0E0; font-size: 12px; }
+QTabBar::tab:selected { color: #1E293B; font-weight: 600; border-bottom: 2px solid #3B82F6; }
+QTabBar::tab:hover:!selected { color: #1E293B; background: #F8FAFC; }
+
+/* ---- GroupBox ---- */
+QGroupBox {
+    font-weight: 600; font-size: 13px; color: #1E293B;
+    border: 1px solid #E2E8F0; border-radius: 8px;
+    margin-top: 16px; padding: 20px 12px 12px 12px; background: #FFFFFF;
+}
+QGroupBox::title {
+    subcontrol-origin: margin; left: 16px;
+    padding: 0 8px; color: #1E293B;
+}
+
+/* ---- StatusBar ---- */
+QStatusBar {
+    background: #FFFFFF; border-top: 1px solid #E2E8F0;
+    font-size: 12px; color: #64748B; padding: 2px 16px;
+}
+
+/* ---- Dialog ---- */
+QDialog { background: #FFFFFF; }
+QDialogButtonBox QPushButton { min-width: 80px; padding: 6px 24px; }
+
+/* ---- Splitter ---- */
+QSplitter::handle:horizontal { background: #E2E8F0; width: 1px; }
+QSplitter::handle:vertical { background: #E2E8F0; height: 1px; }
+
+/* ---- 语义化标签 ---- */
+QLabel#sectionTitle { font-size: 15px; font-weight: 600; color: #1E293B; padding: 4px 0; }
+QLabel#sectionTitleBlue { font-size: 15px; font-weight: 600; color: #3B82F6; padding: 4px 0; }
+QLabel#sectionTitleRed { font-size: 15px; font-weight: 600; color: #DC2626; padding: 4px 0; }
+QLabel#sectionTitleOrange { font-size: 15px; font-weight: 600; color: #D97706; padding: 4px 0; }
+QLabel#summaryLabel { font-weight: 600; font-size: 14px; padding: 8px; color: #1E293B; }
+QLabel#dangerSummaryLabel { font-weight: 600; font-size: 14px; padding: 8px; color: #DC2626; }
+QLabel#dialogInfoLabel { font-size: 14px; font-weight: 600; padding: 8px; color: #1E293B; background: #F8FAFC; border-radius: 6px; }
+QLabel#filterLabel { color: #64748B; font-size: 12px; }
+QLabel#appTitle { font-size: 16px; font-weight: 700; color: #1E293B; padding: 0 4px; }
+QTextEdit#reportText { font-size: 13px; font-family: 'Microsoft YaHei', monospace; padding: 12px; }
+
+/* ---- 容器 ---- */
+QFrame#filterCard { background: #F8FAFC; border: 1px solid #E2E8F0; border-radius: 8px; }
+QFrame#toolbarSeparator { color: #E2E8F0; max-width: 1px; margin: 0 8px; }
+
+/* ---- 搜索框 ---- */
+QLineEdit#globalSearch {
+    padding: 7px 12px 7px 32px; border: 1px solid #E2E8F0;
+    border-radius: 6px; background: #F8FAFC; font-size: 13px;
+}
+QLineEdit#globalSearch:focus { background: #FFFFFF; border-color: #3B82F6; }
 """
 
 
@@ -518,6 +647,7 @@ class ProductEditDialog(QDialog):
         self.setWindowTitle("编辑机型" if product else "新增机型")
         self.setMinimumWidth(450)
         layout = QFormLayout(self)
+        layout.setContentsMargins(16, 16, 16, 16)
 
         self.series_edit = QLineEdit()
         self.cpu_edit = QLineEdit()
@@ -570,6 +700,7 @@ class BatchDialog(QDialog):
         self.setWindowTitle("新增库存批次")
         self.setMinimumWidth(350)
         layout = QFormLayout(self)
+        layout.setContentsMargins(16, 16, 16, 16)
 
         self.price_spin = QSpinBox()
         self.price_spin.setRange(0, 999999)
@@ -637,6 +768,7 @@ class CustomerDialog(QDialog):
         self.setWindowTitle("编辑客户" if customer else "新增客户")
         self.setMinimumWidth(350)
         layout = QFormLayout(self)
+        layout.setContentsMargins(16, 16, 16, 16)
 
         self.name_edit = QLineEdit()
         self.wechat_edit = QLineEdit()
@@ -682,6 +814,7 @@ class QuoteEditDialog(QDialog):
         self.setWindowTitle("编辑报价记录" if quote else "新增报价记录")
         self.setMinimumWidth(400)
         layout = QFormLayout(self)
+        layout.setContentsMargins(16, 16, 16, 16)
 
         self.price_spin = QSpinBox()
         self.price_spin.setRange(0, 999999)
@@ -779,11 +912,12 @@ class QuotePanel(QWidget):
 
         # 机型信息
         self.product_label = QLabel("未选择机型")
-        self.product_label.setStyleSheet("font-size: 15px; font-weight: bold; color: #1976D2;")
+        self.product_label.setObjectName("sectionTitleBlue")
         layout.addWidget(self.product_label)
 
         # 批次表格
         self.batch_table = QTableWidget()
+        self.batch_table.setAlternatingRowColors(True)
         self.batch_table.setColumnCount(7)
         self.batch_table.setHorizontalHeaderLabels(["购入价", "进货数量", "剩余", "入库日期", "上游", "备注", "序列号"])
         self.batch_table.horizontalHeader().setStretchLastSection(True)
@@ -795,11 +929,13 @@ class QuotePanel(QWidget):
         # 批次操作按钮行
         btn_row1 = QHBoxLayout()
         self.add_batch_btn = QPushButton("+ 新增批次")
+        self.add_batch_btn.setObjectName("primaryBtn")
         self.add_batch_btn.clicked.connect(self.on_add_batch)
-        self.del_batch_btn = QPushButton("删除批次", objectName="del_batch")
-        self.del_batch_btn.setStyleSheet("background-color: #D32F2F; color: white; padding: 4px 12px; border: none; border-radius: 4px;")
+        self.del_batch_btn = QPushButton("删除批次")
+        self.del_batch_btn.setObjectName("dangerBtn")
         self.del_batch_btn.clicked.connect(self.on_delete_batch)
         self.refresh_batch_btn = QPushButton("刷新")
+        self.refresh_batch_btn.setObjectName("ghostBtn")
         self.refresh_batch_btn.clicked.connect(self.refresh)
         btn_row1.addWidget(self.add_batch_btn)
         btn_row1.addWidget(self.del_batch_btn)
@@ -845,8 +981,10 @@ class QuotePanel(QWidget):
 
         btn_row2 = QHBoxLayout()
         self.quote_copy_btn = QPushButton("报价并复制文本")
+        self.quote_copy_btn.setObjectName("primaryBtn")
         self.quote_copy_btn.clicked.connect(self.on_quote_and_copy)
         self.quote_img_btn = QPushButton("生成报价图片")
+        self.quote_img_btn.setObjectName("ghostBtn")
         self.quote_img_btn.clicked.connect(self.on_quote_image)
         btn_row2.addWidget(self.quote_copy_btn)
         btn_row2.addWidget(self.quote_img_btn)
@@ -923,6 +1061,7 @@ class QuotePanel(QWidget):
                 data["supplier_id"],
                 data["sn_list"],
             )
+            add_operation_log("入库", "batches", 0, f"数量={data['quantity']}, 单价={data['price']}")
             self.refresh()
 
     def on_delete_batch(self):
@@ -942,6 +1081,7 @@ class QuotePanel(QWidget):
         )
         if reply == QMessageBox.StandardButton.Yes:
             delete_batch(batch_id)
+            add_operation_log("删除批次", "batches", batch_id, "删除批次")
             self.refresh()
 
     def on_quote_and_copy(self):
@@ -1098,8 +1238,10 @@ class OperationLogDialog(QDialog):
         self.setWindowTitle("最近操作记录")
         self.setMinimumSize(700, 400)
         layout = QVBoxLayout(self)
+        layout.setContentsMargins(16, 16, 16, 16)
 
         self.table = QTableWidget()
+        self.table.setAlternatingRowColors(True)
         self.table.setColumnCount(4)
         self.table.setHorizontalHeaderLabels(["时间", "操作", "对象", "描述"])
         self.table.setSelectionBehavior(QAbstractItemView.SelectionBehavior.SelectRows)
@@ -1112,9 +1254,11 @@ class OperationLogDialog(QDialog):
         btn_row = QHBoxLayout()
         btn_row.addStretch()
         refresh_btn = QPushButton("刷新")
+        refresh_btn.setObjectName("ghostBtn")
         refresh_btn.clicked.connect(self.load_logs)
         btn_row.addWidget(refresh_btn)
         close_btn = QPushButton("关闭")
+        close_btn.setObjectName("ghostBtn")
         close_btn.clicked.connect(self.close)
         btn_row.addWidget(close_btn)
         layout.addLayout(btn_row)
@@ -1143,7 +1287,6 @@ class MainWindow(QMainWindow):
         super().__init__()
         self.setWindowTitle("调货助手 v1.10")
         self.setMinimumSize(1100, 700)
-        self.setStyleSheet(APP_STYLE)
 
         # 初始化数据库（含自动备份 + 完整性检查）
         init_ok, init_msg = init_db()
@@ -1153,57 +1296,80 @@ class MainWindow(QMainWindow):
         central = QWidget()
         self.setCentralWidget(central)
         main_layout = QVBoxLayout(central)
-        main_layout.setContentsMargins(6, 6, 6, 6)
+        main_layout.setContentsMargins(12, 12, 12, 12)
 
         # 搜索 + 工具栏
         top_bar = QHBoxLayout()
         self.search_edit = QLineEdit()
+        self.search_edit.setObjectName("globalSearch")
         self.search_edit.setPlaceholderText("搜索机型（系列/CPU/关键字）...")
         self.search_edit.textChanged.connect(self.on_search)
         self.search_edit.setMinimumWidth(250)
 
         self.import_btn = QPushButton("导入 Word 价格表")
+        self.import_btn.setObjectName("ghostBtn")
         self.import_btn.clicked.connect(self.on_import_word)
         self.broadcast_btn = QPushButton("群发图片")
+        self.broadcast_btn.setObjectName("ghostBtn")
         self.broadcast_btn.clicked.connect(self.on_broadcast)
         self.export_btn = QPushButton("导出 Excel")
+        self.export_btn.setObjectName("ghostBtn")
         self.export_btn.clicked.connect(self.on_export_excel)
         self.export_json_btn = QPushButton("JSON备份")
+        self.export_json_btn.setObjectName("ghostBtn")
         self.export_json_btn.clicked.connect(self.on_export_json)
         self.import_json_btn = QPushButton("JSON导入")
+        self.import_json_btn.setObjectName("ghostBtn")
         self.import_json_btn.clicked.connect(self.on_import_json)
         self.log_btn = QPushButton("操作日志")
+        self.log_btn.setObjectName("ghostBtn")
         self.log_btn.clicked.connect(self.on_show_logs)
         self.statement_btn = QPushButton("对账单")
+        self.statement_btn.setObjectName("ghostBtn")
         self.statement_btn.clicked.connect(self.on_statement)
         self.follow_up_btn = QPushButton("🔔 跟单提醒")
+        self.follow_up_btn.setObjectName("ghostBtn")
         self.follow_up_btn.clicked.connect(self.on_follow_up)
         self.report_btn = QPushButton("📊 月度报告")
+        self.report_btn.setObjectName("ghostBtn")
         self.report_btn.clicked.connect(self.on_monthly_report)
         self.diagnose_btn = QPushButton("🔧 远程诊断")
+        self.diagnose_btn.setObjectName("ghostBtn")
         self.diagnose_btn.clicked.connect(self.on_remote_diagnose)
         self.price_diff_btn = QPushButton("价格异动")
+        self.price_diff_btn.setObjectName("ghostBtn")
         self.price_diff_btn.clicked.connect(self.on_price_diff)
         self.quote_assist_btn = QPushButton("报价助手")
+        self.quote_assist_btn.setObjectName("ghostBtn")
         self.quote_assist_btn.clicked.connect(self.on_quote_assist)
         self.shipment_flow_btn = QPushButton("出库一条龙")
+        self.shipment_flow_btn.setObjectName("ghostBtn")
         self.shipment_flow_btn.clicked.connect(self.on_shipment_flow)
 
         top_bar.addWidget(QLabel("🔍"))
         top_bar.addWidget(self.search_edit)
         top_bar.addStretch()
+
+        def _add_sep(layout):
+            sep = QFrame()
+            sep.setFrameShape(QFrame.Shape.VLine)
+            sep.setObjectName("toolbarSeparator")
+            layout.addWidget(sep)
+
         top_bar.addWidget(self.follow_up_btn)
         top_bar.addWidget(self.report_btn)
         top_bar.addWidget(self.diagnose_btn)
         top_bar.addWidget(self.price_diff_btn)
         top_bar.addWidget(self.quote_assist_btn)
         top_bar.addWidget(self.shipment_flow_btn)
+        _add_sep(top_bar)
         top_bar.addWidget(self.import_btn)
         top_bar.addWidget(self.broadcast_btn)
         top_bar.addWidget(self.export_btn)
         top_bar.addWidget(self.statement_btn)
         top_bar.addWidget(self.export_json_btn)
         top_bar.addWidget(self.import_json_btn)
+        _add_sep(top_bar)
         top_bar.addWidget(self.log_btn)
         main_layout.addLayout(top_bar)
 
@@ -1223,22 +1389,26 @@ class MainWindow(QMainWindow):
 
         btn_row = QHBoxLayout()
         self.add_product_btn = QPushButton("+ 新增机型")
+        self.add_product_btn.setObjectName("primaryBtn")
         self.add_product_btn.clicked.connect(self.on_add_product)
         self.edit_product_btn = QPushButton("编辑")
+        self.edit_product_btn.setObjectName("ghostBtn")
         self.edit_product_btn.clicked.connect(self.on_edit_product)
-        self.del_product_btn = QPushButton("删除", objectName="del")
-        self.del_product_btn.setStyleSheet("background-color: #D32F2F; color: white; padding: 4px 12px; border: none; border-radius: 4px;")
+        self.del_product_btn = QPushButton("删除")
+        self.del_product_btn.setObjectName("dangerBtn")
         self.del_product_btn.clicked.connect(self.on_delete_product)
         btn_row.addWidget(self.add_product_btn)
         btn_row.addWidget(self.edit_product_btn)
         btn_row.addWidget(self.del_product_btn)
         self.refresh_product_list_btn = QPushButton("刷新")
+        self.refresh_product_list_btn.setObjectName("ghostBtn")
         self.refresh_product_list_btn.clicked.connect(lambda: self.refresh_product_list(self.search_edit.text().strip()))
         btn_row.addWidget(self.refresh_product_list_btn)
         btn_row.addStretch()
         left_layout.addLayout(btn_row)
 
         self.product_table = QTableWidget()
+        self.product_table.setAlternatingRowColors(True)
         self.product_table.setColumnCount(9)
         self.product_table.setHorizontalHeaderLabels(["ID", "系列", "CPU", "内存", "硬盘", "显卡", "屏幕", "备注", "库存"])
         self.product_table.setSelectionBehavior(QAbstractItemView.SelectionBehavior.SelectRows)
@@ -1344,6 +1514,7 @@ class MainWindow(QMainWindow):
             success, msg = ship_quote(quote_id, data.get("sn_list", ""))
             if success:
                 QMessageBox.information(self, "成功", msg)
+                add_operation_log("出库", "quotes", quote_id, f"SN={data.get('sn_list', '')}")
                 self.refresh_records()
             else:
                 QMessageBox.warning(self, "出库失败", msg)
@@ -1378,6 +1549,7 @@ class MainWindow(QMainWindow):
                 remark=data["remark"],
             )
             QMessageBox.information(self, "成功", f"收款 ¥{data['amount']:.2f} 已记录！")
+            add_operation_log("收款", "quotes", quote_id, f"金额={data['amount']:.2f}")
             self.refresh_records()
 
     def on_cancel_quote(self):
@@ -1400,6 +1572,7 @@ class MainWindow(QMainWindow):
         )
         if reply == QMessageBox.StandardButton.Yes:
             update_quote_status(quote_id, "已取消")
+            add_operation_log("取消订单", "quotes", quote_id, "取消订单")
             self.refresh_records()
 
     def on_statement(self):
@@ -1412,7 +1585,7 @@ class MainWindow(QMainWindow):
     def _build_finance_tab(self):
         tab = QWidget()
         layout = QVBoxLayout(tab)
-        layout.setContentsMargins(4, 4, 4, 4)
+        layout.setContentsMargins(12, 12, 12, 12)
 
         # === 上部分：应收/应付（占比调大） ===
         top_splitter = QSplitter(Qt.Orientation.Horizontal)
@@ -1422,10 +1595,11 @@ class MainWindow(QMainWindow):
         left_layout.setContentsMargins(0, 0, 0, 0)
 
         left_title = QLabel("应收款项（客户欠款）")
-        left_title.setStyleSheet("font-size: 15px; font-weight: bold; color: #D32F2F; padding: 4px;")
+        left_title.setObjectName("sectionTitleRed")
         left_layout.addWidget(left_title)
 
         self.receivable_table = QTableWidget()
+        self.receivable_table.setAlternatingRowColors(True)
         self.receivable_table.setColumnCount(5)
         self.receivable_table.setHorizontalHeaderLabels(["客户", "欠款金额", "订单数", "联系方式", "操作"])
         self.receivable_table.setSelectionBehavior(QAbstractItemView.SelectionBehavior.SelectRows)
@@ -1435,6 +1609,7 @@ class MainWindow(QMainWindow):
         left_layout.addWidget(self.receivable_table)
 
         self.refresh_receivable_btn = QPushButton("刷新")
+        self.refresh_receivable_btn.setObjectName("ghostBtn")
         self.refresh_receivable_btn.clicked.connect(self.refresh_finance)
         left_btn_row = QHBoxLayout()
         left_btn_row.addStretch()
@@ -1446,10 +1621,11 @@ class MainWindow(QMainWindow):
         right_layout.setContentsMargins(0, 0, 0, 0)
 
         right_title = QLabel("应付款项（欠上游款）")
-        right_title.setStyleSheet("font-size: 15px; font-weight: bold; color: #F57C00; padding: 4px;")
+        right_title.setObjectName("sectionTitleOrange")
         right_layout.addWidget(right_title)
 
         self.payable_table = QTableWidget()
+        self.payable_table.setAlternatingRowColors(True)
         self.payable_table.setColumnCount(5)
         self.payable_table.setHorizontalHeaderLabels(["上游", "欠款金额", "批次", "联系方式", "操作"])
         self.payable_table.setSelectionBehavior(QAbstractItemView.SelectionBehavior.SelectRows)
@@ -1459,6 +1635,7 @@ class MainWindow(QMainWindow):
         right_layout.addWidget(self.payable_table)
 
         self.refresh_payable_btn = QPushButton("刷新")
+        self.refresh_payable_btn.setObjectName("ghostBtn")
         self.refresh_payable_btn.clicked.connect(self.refresh_finance)
         right_btn_row = QHBoxLayout()
         right_btn_row.addStretch()
@@ -1473,7 +1650,6 @@ class MainWindow(QMainWindow):
 
         # === 下部分：收付款流水预览（占比调小） ===
         flow_group = QGroupBox("收付款流水记录")
-        flow_group.setStyleSheet("font-weight: bold;")
         flow_group.setMaximumHeight(250)  # 设置最大高度，限制流水区域
         flow_layout = QVBoxLayout(flow_group)
 
@@ -1507,6 +1683,7 @@ class MainWindow(QMainWindow):
         filter_row.addWidget(self.payment_date_to)
 
         self.refresh_flow_btn = QPushButton("刷新")
+        self.refresh_flow_btn.setObjectName("ghostBtn")
         self.refresh_flow_btn.clicked.connect(self.refresh_payment_flow)
         filter_row.addWidget(self.refresh_flow_btn)
 
@@ -1515,6 +1692,7 @@ class MainWindow(QMainWindow):
 
         # 流水表格
         self.payment_flow_table = QTableWidget()
+        self.payment_flow_table.setAlternatingRowColors(True)
         self.payment_flow_table.setColumnCount(8)
         self.payment_flow_table.setHorizontalHeaderLabels(
             ["ID", "日期", "类型", "金额", "方式", "关联对象", "备注", "操作"]
@@ -1527,7 +1705,7 @@ class MainWindow(QMainWindow):
 
         # 统计标签
         self.payment_flow_stats = QLabel()
-        self.payment_flow_stats.setStyleSheet("font-weight: bold; padding: 4px;")
+        self.payment_flow_stats.setObjectName("summaryLabel")
         flow_layout.addWidget(self.payment_flow_stats)
 
         # 下部分占比 1（25%）
@@ -1560,7 +1738,7 @@ class MainWindow(QMainWindow):
             contact = " | ".join(filter(None, [r[2] or "", r[3] or ""]))
             self.receivable_table.setItem(i, 3, QTableWidgetItem(contact))
             pay_btn = QPushButton("收款")
-            pay_btn.setStyleSheet("background-color: #1976D2; color: white; padding: 2px 8px;")
+            pay_btn.setObjectName("tableActionPrimary")
             pay_btn.clicked.connect(lambda checked, cid=r[0]: self._on_finance_receive(cid))
             self.receivable_table.setCellWidget(i, 4, pay_btn)
         self.receivable_table.resizeColumnsToContents()
@@ -1589,7 +1767,7 @@ class MainWindow(QMainWindow):
             contact = " | ".join(filter(None, [r[2] or "", r[3] or ""]))
             self.payable_table.setItem(i, 3, QTableWidgetItem(contact))
             pay_btn = QPushButton("付款")
-            pay_btn.setStyleSheet("background-color: #F57C00; color: white; padding: 2px 8px;")
+            pay_btn.setObjectName("tableActionOrange")
             pay_btn.clicked.connect(lambda checked, sid=r[0]: self._on_finance_pay(sid))
             self.payable_table.setCellWidget(i, 4, pay_btn)
         self.payable_table.resizeColumnsToContents()
@@ -1672,12 +1850,12 @@ class MainWindow(QMainWindow):
             btn_layout.setContentsMargins(2, 2, 2, 2)
 
             edit_btn = QPushButton("修改")
-            edit_btn.setStyleSheet("background-color: #1976D2; color: white; padding: 2px 6px; font-size: 12px;")
+            edit_btn.setObjectName("tableActionPrimary")
             edit_btn.clicked.connect(lambda checked, pid=p["id"]: self._on_edit_payment(pid))
             btn_layout.addWidget(edit_btn)
 
             del_btn = QPushButton("删除")
-            del_btn.setStyleSheet("background-color: #D32F2F; color: white; padding: 2px 6px; font-size: 12px;")
+            del_btn.setObjectName("tableActionDanger")
             del_btn.clicked.connect(lambda checked, pid=p["id"]: self._on_delete_payment(pid))
             btn_layout.addWidget(del_btn)
 
@@ -1880,21 +2058,24 @@ class MainWindow(QMainWindow):
 
         btn_row = QHBoxLayout()
         add_btn = QPushButton("+ 新增客户")
+        add_btn.setObjectName("primaryBtn")
         add_btn.clicked.connect(self.on_add_customer)
         del_btn = QPushButton("删除客户")
-        del_btn.setStyleSheet("background-color: #D32F2F; color: white; padding: 4px 12px; border: none; border-radius: 4px;")
+        del_btn.setObjectName("dangerBtn")
         del_btn.clicked.connect(self.on_delete_customer)
         btn_row.addWidget(add_btn)
         btn_row.addWidget(del_btn)
         btn_row.addStretch()
 
         self.customer_search = QLineEdit()
+        self.customer_search.setObjectName("globalSearch")
         self.customer_search.setPlaceholderText("搜索客户...")
         self.customer_search.textChanged.connect(self.refresh_customer_list)
         btn_row.addWidget(self.customer_search)
         layout.addLayout(btn_row)
 
         self.customer_table = QTableWidget()
+        self.customer_table.setAlternatingRowColors(True)
         self.customer_table.setColumnCount(6)
         self.customer_table.setHorizontalHeaderLabels(["ID", "名称", "微信", "QQ", "电话", "备注"])
         self.customer_table.setSelectionBehavior(QAbstractItemView.SelectionBehavior.SelectRows)
@@ -1909,10 +2090,11 @@ class MainWindow(QMainWindow):
         history_layout = QVBoxLayout(history_group)
 
         self.customer_stats_label = QLabel("请选择客户查看购买历史")
-        self.customer_stats_label.setStyleSheet("font-weight: bold; padding: 4px;")
+        self.customer_stats_label.setObjectName("summaryLabel")
         history_layout.addWidget(self.customer_stats_label)
 
         self.customer_history_table = QTableWidget()
+        self.customer_history_table.setAlternatingRowColors(True)
         self.customer_history_table.setColumnCount(8)
         self.customer_history_table.setHorizontalHeaderLabels(["日期", "机型", "CPU", "数量", "购入价", "报价", "毛利", "备注"])
         self.customer_history_table.setSelectionBehavior(QAbstractItemView.SelectionBehavior.SelectRows)
@@ -1931,23 +2113,25 @@ class MainWindow(QMainWindow):
 
         btn_row = QHBoxLayout()
         self.confirm_record_btn = QPushButton("确认报价")
-        self.confirm_record_btn.setStyleSheet("background-color: #388E3C; color: white; padding: 6px 12px; border: none; border-radius: 4px; font-size: 13px;")
+        self.confirm_record_btn.setObjectName("successBtn")
         self.confirm_record_btn.clicked.connect(self.on_confirm_quote)
         self.ship_record_btn = QPushButton("出库")
-        self.ship_record_btn.setStyleSheet("background-color: #F57C00; color: white; padding: 6px 12px; border: none; border-radius: 4px; font-size: 13px;")
+        self.ship_record_btn.setObjectName("warningBtn")
         self.ship_record_btn.clicked.connect(self.on_ship_quote)
         self.receive_btn = QPushButton("收款")
-        self.receive_btn.setStyleSheet("background-color: #1976D2; color: white; padding: 6px 12px; border: none; border-radius: 4px; font-size: 13px;")
+        self.receive_btn.setObjectName("primaryBtn")
         self.receive_btn.clicked.connect(self.on_receive_payment)
         self.cancel_record_btn = QPushButton("取消订单")
-        self.cancel_record_btn.setStyleSheet("background-color: #757575; color: white; padding: 6px 12px; border: none; border-radius: 4px; font-size: 13px;")
+        self.cancel_record_btn.setObjectName("ghostBtn")
         self.cancel_record_btn.clicked.connect(self.on_cancel_quote)
         self.edit_record_btn = QPushButton("编辑")
+        self.edit_record_btn.setObjectName("ghostBtn")
         self.edit_record_btn.clicked.connect(self.on_edit_quote)
         self.del_record_btn = QPushButton("删除")
-        self.del_record_btn.setStyleSheet("background-color: #D32F2F; color: white; padding: 6px 12px; border: none; border-radius: 4px; font-size: 13px;")
+        self.del_record_btn.setObjectName("dangerBtn")
         self.del_record_btn.clicked.connect(self.on_delete_quote)
         self.refresh_records_btn = QPushButton("刷新")
+        self.refresh_records_btn.setObjectName("ghostBtn")
         self.refresh_records_btn.clicked.connect(self.refresh_records)
         btn_row.addWidget(self.confirm_record_btn)
         btn_row.addWidget(self.ship_record_btn)
@@ -1978,6 +2162,7 @@ class MainWindow(QMainWindow):
         self.status_filter.currentTextChanged.connect(self.refresh_records)
 
         self.export_records_btn = QPushButton("导出 Excel")
+        self.export_records_btn.setObjectName("ghostBtn")
         self.export_records_btn.clicked.connect(self.on_export_records_excel)
 
         filter_layout = QHBoxLayout()
@@ -1992,9 +2177,15 @@ class MainWindow(QMainWindow):
         filter_layout.addStretch()
         filter_layout.addWidget(self.export_records_btn)
 
-        layout.addLayout(filter_layout)
+        filter_card = QFrame()
+        filter_card.setObjectName("filterCard")
+        filter_card_layout = QVBoxLayout(filter_card)
+        filter_card_layout.setContentsMargins(12, 8, 12, 8)
+        filter_card_layout.addLayout(filter_layout)
+        layout.addWidget(filter_card)
 
         self.record_table = QTableWidget()
+        self.record_table.setAlternatingRowColors(True)
         self.record_table.setColumnCount(17)
         self.record_table.setHorizontalHeaderLabels(
             ["ID", "日期", "客户", "机型", "CPU", "内存", "硬盘", "显卡", "上游",
@@ -2007,6 +2198,7 @@ class MainWindow(QMainWindow):
         layout.addWidget(self.record_table)
 
         self.stats_label = QLabel()
+        self.stats_label.setObjectName("summaryLabel")
         layout.addWidget(self.stats_label)
 
         return tab
@@ -2063,6 +2255,7 @@ class MainWindow(QMainWindow):
                 QMessageBox.warning(self, "提示", "系列名称不能为空")
                 return
             add_product(**data)
+            add_operation_log("新增机型", "products", 0, f"系列={data['series']}")
             self.refresh_product_list(self.search_edit.text().strip())
 
     def on_edit_product(self):
@@ -2103,6 +2296,7 @@ class MainWindow(QMainWindow):
         )
         if reply == QMessageBox.StandardButton.Yes:
             delete_product(pid)
+            add_operation_log("删除机型", "products", pid, f"系列={series}")
             self.refresh_product_list(self.search_edit.text().strip())
 
     # -------------------------------------------------------
@@ -2129,6 +2323,7 @@ class MainWindow(QMainWindow):
                 QMessageBox.warning(self, "提示", "客户名称不能为空")
                 return
             add_customer(**data)
+            add_operation_log("新增客户", "customers", 0, f"名称={data['name']}")
             self.refresh_customer_list()
 
     def on_customer_cell_clicked(self, row, col):
@@ -2219,6 +2414,7 @@ class MainWindow(QMainWindow):
             )
         if reply == QMessageBox.StandardButton.Yes:
             delete_customer_cascade(cid)
+            add_operation_log("删除客户", "customers", cid, f"名称={name}")
             self.refresh_customer_list()
             self.refresh_records()
 
@@ -2231,21 +2427,24 @@ class MainWindow(QMainWindow):
 
         btn_row = QHBoxLayout()
         add_btn = QPushButton("+ 新增上游")
+        add_btn.setObjectName("primaryBtn")
         add_btn.clicked.connect(self.on_add_supplier)
         del_btn = QPushButton("删除上游")
-        del_btn.setStyleSheet("background-color: #D32F2F; color: white; padding: 4px 12px; border: none; border-radius: 4px;")
+        del_btn.setObjectName("dangerBtn")
         del_btn.clicked.connect(self.on_delete_supplier)
         btn_row.addWidget(add_btn)
         btn_row.addWidget(del_btn)
         btn_row.addStretch()
 
         self.supplier_search = QLineEdit()
+        self.supplier_search.setObjectName("globalSearch")
         self.supplier_search.setPlaceholderText("搜索上游...")
         self.supplier_search.textChanged.connect(self.refresh_supplier_list)
         btn_row.addWidget(self.supplier_search)
         layout.addLayout(btn_row)
 
         self.supplier_table = QTableWidget()
+        self.supplier_table.setAlternatingRowColors(True)
         self.supplier_table.setColumnCount(6)
         self.supplier_table.setHorizontalHeaderLabels(["ID", "名称", "微信", "QQ", "电话", "备注"])
         self.supplier_table.setSelectionBehavior(QAbstractItemView.SelectionBehavior.SelectRows)
@@ -2260,10 +2459,11 @@ class MainWindow(QMainWindow):
         history_layout = QVBoxLayout(history_group)
 
         self.supplier_stats_label = QLabel("请选择上游查看采购历史")
-        self.supplier_stats_label.setStyleSheet("font-weight: bold; padding: 4px;")
+        self.supplier_stats_label.setObjectName("summaryLabel")
         history_layout.addWidget(self.supplier_stats_label)
 
         self.supplier_history_table = QTableWidget()
+        self.supplier_history_table.setAlternatingRowColors(True)
         self.supplier_history_table.setColumnCount(7)
         self.supplier_history_table.setHorizontalHeaderLabels(["入库日期", "机型", "CPU", "数量", "购入价", "总金额", "备注"])
         self.supplier_history_table.setSelectionBehavior(QAbstractItemView.SelectionBehavior.SelectRows)
@@ -2334,6 +2534,7 @@ class MainWindow(QMainWindow):
                 QMessageBox.warning(self, "提示", "上游名称不能为空")
                 return
             add_supplier(**data)
+            add_operation_log("新增供应商", "suppliers", 0, f"名称={data['name']}")
             self.refresh_supplier_list()
 
     def on_edit_supplier_from_table(self):
@@ -2390,6 +2591,7 @@ class MainWindow(QMainWindow):
             )
         if reply == QMessageBox.StandardButton.Yes:
             delete_supplier_cascade(sid)
+            add_operation_log("删除供应商", "suppliers", sid, f"名称={name}")
             self.refresh_supplier_list()
             self.refresh_records()
 
@@ -2414,6 +2616,7 @@ class MainWindow(QMainWindow):
             "已取消": "#BDBDBD",
         }
 
+        self.record_table.setSortingEnabled(False)
         self.record_table.setRowCount(len(quotes))
         total_cost = 0
         total_sale = 0
@@ -2476,6 +2679,7 @@ class MainWindow(QMainWindow):
                     except ValueError:
                         pass
 
+        self.record_table.setSortingEnabled(True)
         self.record_table.resizeColumnsToContents()
         self.record_table.setColumnWidth(12, 70)
         self.record_table.setColumnWidth(13, 80)
@@ -2484,7 +2688,6 @@ class MainWindow(QMainWindow):
         self.stats_label.setText(
             f"共 {len(quotes)} 条记录  |  总购入: ¥{total_cost:.0f}  |  总报价: ¥{total_sale:.0f}  |  毛利: ¥{profit:.0f}"
         )
-        self.stats_label.setStyleSheet("font-weight: bold; padding: 6px;")
 
     def on_edit_quote(self):
         row = self.record_table.currentRow()
@@ -2528,6 +2731,7 @@ class MainWindow(QMainWindow):
         )
         if reply == QMessageBox.StandardButton.Yes:
             delete_quote(quote_id)
+            add_operation_log("删除报价", "quotes", quote_id, f"客户={customer}, 机型={series}")
             self.refresh_records()
 
     # -------------------------------------------------------
@@ -2642,7 +2846,7 @@ class MainWindow(QMainWindow):
         layout = QVBoxLayout(dlg)
 
         label = QLabel(text)
-        label.setStyleSheet("font-size: 13px; padding: 8px;")
+        label.setObjectName("reportText")
         label.setWordWrap(True)
         layout.addWidget(label)
 
@@ -2666,7 +2870,7 @@ class MainWindow(QMainWindow):
         text_edit = QTextEdit()
         text_edit.setReadOnly(True)
         text_edit.setPlainText(text)
-        text_edit.setStyleSheet("font-size: 13px; font-family: 'Microsoft YaHei', monospace;")
+        text_edit.setObjectName("reportText")
         layout.addWidget(text_edit)
 
         buttons = QDialogButtonBox(QDialogButtonBox.StandardButton.Ok)
@@ -2696,7 +2900,7 @@ class MainWindow(QMainWindow):
         quick_row = QHBoxLayout()
         for key_info in get_all_diagnose_keys():
             btn = QPushButton(key_info["title"])
-            btn.setStyleSheet("padding: 4px 12px;")
+            btn.setObjectName("diagnoseOptionBtn")
             btn.clicked.connect(lambda checked, k=key_info["key"]: self._show_diagnose_steps(dlg, k))
             quick_row.addWidget(btn)
         quick_row.addStretch()
@@ -2706,7 +2910,7 @@ class MainWindow(QMainWindow):
         result_text = QTextEdit()
         result_text.setReadOnly(True)
         result_text.setPlaceholderText("选择一个故障类型开始排查...")
-        result_text.setStyleSheet("font-size: 13px;")
+        result_text.setObjectName("reportText")
         layout.addWidget(result_text)
 
         def do_search():
@@ -2743,12 +2947,12 @@ class MainWindow(QMainWindow):
         layout = QVBoxLayout(dlg)
 
         title = QLabel(tree["title"])
-        title.setStyleSheet("font-size: 16px; font-weight: bold; color: #1976D2; padding: 8px;")
+        title.setObjectName("sectionTitleBlue")
         layout.addWidget(title)
 
         result_text = QTextEdit()
         result_text.setReadOnly(True)
-        result_text.setStyleSheet("font-size: 13px;")
+        result_text.setObjectName("reportText")
         layout.addWidget(result_text)
 
         selected_path = []
@@ -2767,7 +2971,7 @@ class MainWindow(QMainWindow):
 
             for opt_name, opt_data in step["options"].items():
                 btn = QPushButton(f"→ {opt_name}")
-                btn.setStyleSheet("text-align: left; padding: 6px 12px; font-size: 13px;")
+                btn.setObjectName("diagnoseOptionBtn")
                 btn.clicked.connect(lambda checked, on=opt_name, od=opt_data, si=step_idx: handle_option(on, od, si))
                 layout.insertWidget(layout.count() - 1, btn)
 
@@ -2780,7 +2984,7 @@ class MainWindow(QMainWindow):
 
                 # 生成报告按钮
                 report_btn = QPushButton("📄 生成诊断报告")
-                report_btn.setStyleSheet("background-color: #388E3C; color: white; padding: 6px 16px;")
+                report_btn.setObjectName("successBtn")
                 report_btn.clicked.connect(lambda: self._save_diagnose_report(key, selected_path))
                 layout.insertWidget(layout.count() - 1, report_btn)
 
@@ -2963,12 +3167,12 @@ class MainWindow(QMainWindow):
 
         # 标题
         title = QLabel(f"📊 价格异动报告（{diff['old_date']} → {diff['new_date']}）")
-        title.setStyleSheet("font-size: 16px; font-weight: bold; color: #1976D2; padding: 8px;")
+        title.setObjectName("sectionTitleBlue")
         layout.addWidget(title)
 
         # 摘要
         summary = QLabel(diff["summary"])
-        summary.setStyleSheet("font-size: 14px; font-weight: bold; padding: 4px 8px;")
+        summary.setObjectName("summaryLabel")
         layout.addWidget(summary)
 
         # Tab 切换
@@ -2979,6 +3183,7 @@ class MainWindow(QMainWindow):
             add_tab = QWidget()
             add_layout = QVBoxLayout(add_tab)
             add_table = QTableWidget()
+            add_table.setAlternatingRowColors(True)
             add_table.setColumnCount(6)
             add_table.setHorizontalHeaderLabels(["系列", "CPU", "内存", "硬盘", "显卡", "备注"])
             add_table.setRowCount(len(diff["added"]))
@@ -2999,9 +3204,10 @@ class MainWindow(QMainWindow):
             rm_tab = QWidget()
             rm_layout = QVBoxLayout(rm_tab)
             rm_label = QLabel("⚠️ 以下机型在新价格表中已下架，请检查是否有库存需要尽快出货：")
-            rm_label.setStyleSheet("color: #D32F2F; font-weight: bold; padding: 4px;")
+            rm_label.setObjectName("dangerSummaryLabel")
             rm_layout.addWidget(rm_label)
             rm_table = QTableWidget()
+            rm_table.setAlternatingRowColors(True)
             rm_table.setColumnCount(6)
             rm_table.setHorizontalHeaderLabels(["系列", "CPU", "内存", "硬盘", "显卡", "备注"])
             rm_table.setRowCount(len(diff["removed"]))
@@ -3045,6 +3251,7 @@ class MainWindow(QMainWindow):
         layout.addWidget(label)
 
         table = QTableWidget()
+        table.setAlternatingRowColors(True)
         table.setColumnCount(7)
         table.setHorizontalHeaderLabels(["选中", "系列", "CPU", "内存", "硬盘", "显卡", "备注"])
         table.setRowCount(len(products))
@@ -3079,7 +3286,7 @@ class MainWindow(QMainWindow):
         btn_layout.addStretch()
 
         gen_btn = QPushButton("生成群发图片")
-        gen_btn.setStyleSheet("background-color: #388E3C; color: white; padding: 8px 24px; border: none; border-radius: 4px;")
+        gen_btn.setObjectName("successBtn")
         gen_btn.clicked.connect(dlg.accept)
         btn_layout.addWidget(gen_btn)
         layout.addLayout(btn_layout)
@@ -3188,19 +3395,8 @@ class MainWindow(QMainWindow):
 # ============================================================
 def main():
     app = QApplication(sys.argv)
-    # 尝试引入 qt-material 现代主题（Python 3.13 可能不兼容）
-    theme_applied = False
-    try:
-        from qt_material import apply_theme
-        apply_theme(app, theme='dark_teal.xml')
-        theme_applied = True
-    except Exception:
-        pass
-    
-    # 如果主题未应用，使用 Fusion + 自定义样式
-    if not theme_applied:
-        app.setStyle("Fusion")
-    
+    app.setStyle("Fusion")
+    app.setStyleSheet(APP_STYLE)
     window = MainWindow()
     window.show()
     sys.exit(app.exec())
