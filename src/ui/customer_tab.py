@@ -1,0 +1,191 @@
+"""客户管理 Tab"""
+from PyQt6.QtWidgets import (
+    QWidget, QVBoxLayout, QHBoxLayout,
+    QTableWidget, QTableWidgetItem, QPushButton, QLabel,
+    QLineEdit, QGroupBox, QMessageBox, QAbstractItemView,
+)
+
+from src.models.database import (
+    add_customer, search_customers, get_all_customers,
+    delete_customer_cascade, add_operation_log,
+    get_customer_quotes, get_customer_stats,
+)
+from src.ui.dialogs import CustomerDialog
+
+
+class CustomerTab(QWidget):
+    """客户管理 Tab，嵌入 MainWindow"""
+    
+    def __init__(self, main_window, parent=None):
+        super().__init__(parent)
+        self.main = main_window
+        self.customer_table = None
+        self.customer_search = None
+        self.customer_stats_label = None
+        self.customer_history_table = None
+        self._build_ui()
+    
+    def _build_ui(self):
+        layout = QVBoxLayout(self)
+
+        btn_row = QHBoxLayout()
+        add_btn = QPushButton("+ 新增客户")
+        add_btn.setObjectName("primaryBtn")
+        add_btn.clicked.connect(self.on_add_customer)
+        del_btn = QPushButton("删除客户")
+        del_btn.setObjectName("dangerBtn")
+        del_btn.clicked.connect(self.on_delete_customer)
+        btn_row.addWidget(add_btn)
+        btn_row.addWidget(del_btn)
+        btn_row.addStretch()
+
+        self.customer_search = QLineEdit()
+        self.customer_search.setObjectName("globalSearch")
+        self.customer_search.setPlaceholderText("搜索客户...")
+        self.customer_search.textChanged.connect(self.refresh_customer_list)
+        btn_row.addWidget(self.customer_search)
+        layout.addLayout(btn_row)
+
+        self.customer_table = QTableWidget()
+        self.customer_table.setAlternatingRowColors(True)
+        self.customer_table.setColumnCount(6)
+        self.customer_table.setHorizontalHeaderLabels(["ID", "名称", "微信", "QQ", "电话", "备注"])
+        self.customer_table.setSelectionBehavior(QAbstractItemView.SelectionBehavior.SelectRows)
+        self.customer_table.setEditTriggers(QAbstractItemView.EditTrigger.NoEditTriggers)
+        self.customer_table.setColumnHidden(0, True)
+        self.customer_table.horizontalHeader().setStretchLastSection(True)
+        self.customer_table.doubleClicked.connect(self.on_edit_customer_from_table)
+        self.customer_table.cellClicked.connect(self.on_customer_cell_clicked)
+        layout.addWidget(self.customer_table)
+
+        history_group = QGroupBox("购买历史")
+        history_layout = QVBoxLayout(history_group)
+
+        self.customer_stats_label = QLabel("请选择客户查看购买历史")
+        self.customer_stats_label.setObjectName("summaryLabel")
+        history_layout.addWidget(self.customer_stats_label)
+
+        self.customer_history_table = QTableWidget()
+        self.customer_history_table.setAlternatingRowColors(True)
+        self.customer_history_table.setColumnCount(8)
+        self.customer_history_table.setHorizontalHeaderLabels(["日期", "机型", "CPU", "数量", "购入价", "报价", "毛利", "备注"])
+        self.customer_history_table.setSelectionBehavior(QAbstractItemView.SelectionBehavior.SelectRows)
+        self.customer_history_table.setEditTriggers(QAbstractItemView.EditTrigger.NoEditTriggers)
+        self.customer_history_table.horizontalHeader().setStretchLastSection(True)
+        self.customer_history_table.setColumnWidth(7, 120)
+        history_layout.addWidget(self.customer_history_table)
+
+        layout.addWidget(history_group)
+    
+    def refresh_customer_list(self):
+        keyword = self.customer_search.text().strip()
+        customers = search_customers(keyword) if keyword else get_all_customers()
+        self.customer_table.setRowCount(len(customers))
+        for i, c in enumerate(customers):
+            self.customer_table.setItem(i, 0, QTableWidgetItem(str(c["id"])))
+            self.customer_table.setItem(i, 1, QTableWidgetItem(c["name"]))
+            self.customer_table.setItem(i, 2, QTableWidgetItem(c.get("wechat", "")))
+            self.customer_table.setItem(i, 3, QTableWidgetItem(c.get("qq", "")))
+            self.customer_table.setItem(i, 4, QTableWidgetItem(c.get("phone", "")))
+            self.customer_table.setItem(i, 5, QTableWidgetItem(c.get("note", "")))
+        self.customer_table.resizeColumnsToContents()
+
+    def on_add_customer(self):
+        dlg = CustomerDialog(self)
+        if dlg.exec():
+            data = dlg.get_data()
+            if not data["name"]:
+                QMessageBox.warning(self, "提示", "客户名称不能为空")
+                return
+            add_customer(**data)
+            add_operation_log("新增客户", "customers", 0, f"名称={data['name']}")
+            self.refresh_customer_list()
+
+    def on_customer_cell_clicked(self, row, col):
+        if row < 0:
+            self.customer_stats_label.setText("请选择客户查看购买历史")
+            self.customer_history_table.setRowCount(0)
+            return
+        
+        cid = int(self.customer_table.item(row, 0).text())
+        customer_name = self.customer_table.item(row, 1).text()
+        
+        quotes = get_customer_quotes(cid)
+        stats = get_customer_stats(cid)
+        
+        self.customer_stats_label.setText(
+            f"客户: {customer_name} | 总成交: {stats['total_quotes']}单 | 总金额: ¥{stats['total_amount']:.0f} | 总毛利: ¥{stats['total_profit']:.0f}"
+        )
+        
+        self.customer_history_table.setRowCount(len(quotes))
+        for i, q in enumerate(quotes):
+            purchase_price = q.get("purchase_price", 0) or 0
+            quote_price = q.get("quote_price", 0) or 0
+            quantity = q.get("quote_quantity", 1) or 1
+            profit = (quote_price - purchase_price) * quantity
+            
+            self.customer_history_table.setItem(i, 0, QTableWidgetItem(q.get("quote_date", "")))
+            self.customer_history_table.setItem(i, 1, QTableWidgetItem(q.get("series", "")))
+            self.customer_history_table.setItem(i, 2, QTableWidgetItem(q.get("cpu", "")))
+            self.customer_history_table.setItem(i, 3, QTableWidgetItem(str(quantity)))
+            self.customer_history_table.setItem(i, 4, QTableWidgetItem(f"¥{purchase_price:.0f}"))
+            self.customer_history_table.setItem(i, 5, QTableWidgetItem(f"¥{quote_price:.0f}"))
+            self.customer_history_table.setItem(i, 6, QTableWidgetItem(f"¥{profit:.0f}"))
+            self.customer_history_table.setItem(i, 7, QTableWidgetItem(q.get("remark", "")))
+        
+        self.customer_history_table.resizeColumnsToContents()
+
+    def on_edit_customer_from_table(self):
+        row = self.customer_table.currentRow()
+        if row < 0:
+            return
+        cid = int(self.customer_table.item(row, 0).text())
+        current = {
+            "name": self.customer_table.item(row, 1).text(),
+            "wechat": self.customer_table.item(row, 2).text() if self.customer_table.item(row, 2) else "",
+            "qq": self.customer_table.item(row, 3).text() if self.customer_table.item(row, 3) else "",
+            "phone": self.customer_table.item(row, 4).text() if self.customer_table.item(row, 4) else "",
+            "note": "",
+        }
+        dlg = CustomerDialog(self, current)
+        if dlg.exec():
+            data = dlg.get_data()
+            if not data["name"]:
+                return
+            from src.models.database import get_connection
+            conn = get_connection()
+            conn.execute(
+                "UPDATE customers SET name=?, wechat=?, qq=?, phone=?, note=? WHERE id=?",
+                (data["name"], data["wechat"], data["qq"], data["phone"], data["note"], cid),
+            )
+            conn.commit()
+            conn.close()
+            self.refresh_customer_list()
+
+    def on_delete_customer(self):
+        row = self.customer_table.currentRow()
+        if row < 0:
+            QMessageBox.warning(self, "提示", "请先选择一个客户")
+            return
+        cid = int(self.customer_table.item(row, 0).text())
+        name = self.customer_table.item(row, 1).text()
+        from src.models.database import get_connection
+        conn = get_connection()
+        quote_count = conn.execute("SELECT COUNT(*) FROM quotes WHERE customer_id=?", (cid,)).fetchone()[0]
+        conn.close()
+        if quote_count > 0:
+            reply = QMessageBox.question(
+                self, "确认删除",
+                f"客户「{name}」有 {quote_count} 条关联报价记录。\n\n确定删除该客户及其所有关联数据？\n此操作不可恢复。",
+                QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No
+            )
+        else:
+            reply = QMessageBox.question(
+                self, "确认删除", f"确定删除客户「{name}」？",
+                QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No
+            )
+        if reply == QMessageBox.StandardButton.Yes:
+            delete_customer_cascade(cid)
+            add_operation_log("删除客户", "customers", cid, f"名称={name}")
+            self.refresh_customer_list()
+            self.main.record_tab.refresh_records()

@@ -9,7 +9,7 @@ import shutil
 from datetime import datetime
 
 BACKUP_DIR = os.path.join(os.path.dirname(os.path.abspath(__file__)), "..", "..", "data", "backup")
-MAX_BACKUPS = 7
+MAX_BACKUPS = 30
 
 def get_app_path():
     if getattr(sys, 'frozen', False):
@@ -50,6 +50,52 @@ def backup_database():
         return True, f"备份成功: {os.path.basename(backup_path)}"
     except Exception as e:
         return False, f"备份失败: {str(e)}"
+
+
+def verify_data_integrity():
+    """启动时检查数据完整性，返回 (is_clean, issues_list)"""
+    conn = get_connection()
+    issues = []
+    try:
+        # 检查孤儿报价（batch_id 不存在的报价）
+        orphan_quotes = conn.execute("""
+            SELECT q.id, q.quote_date, q.remark
+            FROM quotes q LEFT JOIN batches b ON q.batch_id = b.id
+            WHERE b.id IS NULL
+        """).fetchall()
+        for oq in orphan_quotes:
+            issues.append(f"孤儿报价: id={oq['id']}, 日期={oq['quote_date']}")
+
+        # 检查孤儿付款（quote_id 不存在或 customer_id 不存在）
+        orphan_payments = conn.execute("""
+            SELECT p.id, p.type, p.amount
+            FROM payments p
+            LEFT JOIN quotes q ON p.quote_id = q.id
+            WHERE p.quote_id IS NOT NULL AND q.id IS NULL
+        """).fetchall()
+        for op in orphan_payments:
+            issues.append(f"孤儿付款: id={op['id']}, type={op['type']}, amount={op['amount']}")
+
+        # 检查负数余额
+        neg_receivable = conn.execute("""
+            SELECT q.id, q.received_amount, q.quote_price * q.quote_quantity AS total
+            FROM quotes q WHERE q.status != '已取消' AND q.received_amount < 0
+        """).fetchall()
+        for nr in neg_receivable:
+            issues.append(f"负数已收金额: quote_id={nr['id']}, received={nr['received_amount']}")
+
+        # 检查负数供应商余额
+        neg_supplier = conn.execute(
+            "SELECT id, name, balance FROM suppliers WHERE balance < 0"
+        ).fetchall()
+        for ns in neg_supplier:
+            issues.append(f"负数供应商余额: supplier_id={ns['id']}, name={ns['name']}, balance={ns['balance']}")
+    except Exception as e:
+        issues.append(f"完整性检查异常: {str(e)}")
+    finally:
+        conn.close()
+
+    return len(issues) == 0, issues
 
 
 def init_db():
@@ -262,6 +308,12 @@ def init_db():
 
     # 启动时自动备份
     backup_database()
+
+    # 启动时数据完整性检查
+    is_clean, issues = verify_data_integrity()
+    if not is_clean:
+        for issue in issues:
+            print(f"[数据完整性] {issue}", file=sys.stderr)
 
     return True, "数据库初始化成功"
 
@@ -828,8 +880,8 @@ def _add_payment_raw(conn, quote_id=None, customer_id=None, supplier_id=None,
             "SELECT received_amount, quote_price, quote_quantity, status FROM quotes WHERE id=?", (quote_id,)
         ).fetchone()
         if row:
-            new_received = row[0]
-            total = row[1] * row[2]
+            new_received = round(row[0], 2)
+            total = round(row[1] * row[2], 2)
             paid = "是" if new_received >= total else "否"
             # 状态：收满则变为"已收款"，否则保持原状态（不自动回退）
             status = row[3]
@@ -1069,8 +1121,8 @@ def _update_quote_payment_status(conn, quote_id):
     ).fetchone()
     if not row:
         return
-    total_amount = row["quote_price"] * row["quote_quantity"]
-    new_received = row["received_amount"]
+    total_amount = round(row["quote_price"] * row["quote_quantity"], 2)
+    new_received = round(row["received_amount"], 2)
     current_status = row["status"]
     sn_list = row["sn_list"] or ""
 
