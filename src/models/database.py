@@ -303,6 +303,28 @@ def init_db():
     except:
         pass
     
+    # v1.11 价税覆盖层
+    cursor.execute("PRAGMA table_info(quotes)")
+    quote_cols = [col[1] for col in cursor.fetchall()]
+    for col, col_def in [
+        ("tax_rate", "REAL DEFAULT NULL"),
+        ("purchase_tax_inclusive", "INTEGER DEFAULT 0"),
+        ("quote_tax_inclusive", "INTEGER DEFAULT 0"),
+    ]:
+        if col not in quote_cols:
+            try:
+                cursor.execute(f"ALTER TABLE quotes ADD COLUMN {col} {col_def}")
+            except sqlite3.OperationalError:
+                pass
+
+    cursor.execute("PRAGMA table_info(customers)")
+    cust_cols = [col[1] for col in cursor.fetchall()]
+    if "default_tax_rate" not in cust_cols:
+        try:
+            cursor.execute("ALTER TABLE customers ADD COLUMN default_tax_rate REAL DEFAULT NULL")
+        except sqlite3.OperationalError:
+            pass
+
     conn.commit()
     conn.close()
 
@@ -520,11 +542,11 @@ def get_total_remaining(product_id):
 
 # ---------- 客户管理 ----------
 
-def add_customer(name, wechat="", qq="", phone="", note=""):
+def add_customer(name, wechat="", qq="", phone="", note="", default_tax_rate=None):
     conn = get_connection()
     conn.execute(
-        "INSERT INTO customers (name, wechat, qq, phone, note) VALUES (?,?,?,?,?)",
-        (name, wechat, qq, phone, note),
+        "INSERT INTO customers (name, wechat, qq, phone, note, default_tax_rate) VALUES (?,?,?,?,?,?)",
+        (name, wechat, qq, phone, note, default_tax_rate),
     )
     conn.commit()
     cid = conn.execute("SELECT last_insert_rowid()").fetchone()[0]
@@ -619,11 +641,11 @@ def delete_supplier_cascade(supplier_id):
 
 # ---------- 报价记录 ----------
 
-def add_quote(batch_id, customer_id, quote_price, quote_quantity, quote_date, remark="", paid="", status="待确认", received_amount=0, sn_list=""):
+def add_quote(batch_id, customer_id, quote_price, quote_quantity, quote_date, remark="", paid="", status="待确认", received_amount=0, sn_list="", tax_rate=None, purchase_tax_inclusive=0, quote_tax_inclusive=0):
     conn = get_connection()
     conn.execute(
-        "INSERT INTO quotes (batch_id, customer_id, quote_price, quote_quantity, quote_date, remark, paid, status, received_amount, sn_list) VALUES (?,?,?,?,?,?,?,?,?,?)",
-        (batch_id, customer_id, quote_price, quote_quantity, quote_date, remark, paid, status, received_amount, sn_list),
+        "INSERT INTO quotes (batch_id, customer_id, quote_price, quote_quantity, quote_date, remark, paid, status, received_amount, sn_list, tax_rate, purchase_tax_inclusive, quote_tax_inclusive) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?)",
+        (batch_id, customer_id, quote_price, quote_quantity, quote_date, remark, paid, status, received_amount, sn_list, tax_rate, purchase_tax_inclusive, quote_tax_inclusive),
     )
     conn.commit()
     qid = conn.execute("SELECT last_insert_rowid()").fetchone()[0]
@@ -631,11 +653,11 @@ def add_quote(batch_id, customer_id, quote_price, quote_quantity, quote_date, re
     return qid
 
 
-def update_quote(quote_id, batch_id, customer_id, quote_price, quote_quantity, quote_date, remark, paid, sn_list=""):
+def update_quote(quote_id, batch_id, customer_id, quote_price, quote_quantity, quote_date, remark, paid, sn_list="", tax_rate=None, purchase_tax_inclusive=0, quote_tax_inclusive=0):
     conn = get_connection()
     conn.execute(
-        "UPDATE quotes SET batch_id=?, customer_id=?, quote_price=?, quote_quantity=?, quote_date=?, remark=?, paid=?, sn_list=? WHERE id=?",
-        (batch_id, customer_id, quote_price, quote_quantity, quote_date, remark, paid, sn_list, quote_id),
+        "UPDATE quotes SET batch_id=?, customer_id=?, quote_price=?, quote_quantity=?, quote_date=?, remark=?, paid=?, sn_list=?, tax_rate=?, purchase_tax_inclusive=?, quote_tax_inclusive=? WHERE id=?",
+        (batch_id, customer_id, quote_price, quote_quantity, quote_date, remark, paid, sn_list, tax_rate, purchase_tax_inclusive, quote_tax_inclusive, quote_id),
     )
     conn.commit()
     conn.close()
@@ -684,6 +706,7 @@ def get_quote_by_id(quote_id):
     conn = get_connection()
     row = conn.execute(
         "SELECT q.id, q.batch_id, q.customer_id, q.quote_price, q.quote_quantity, q.quote_date, q.remark, q.paid, q.status, q.received_amount, q.sn_list, "
+        "q.tax_rate, q.purchase_tax_inclusive, q.quote_tax_inclusive, "
         "p.series, p.cpu, p.ram, p.storage, p.gpu, "
         "b.purchase_price, b.sn_list as batch_sn_list, "
         "c.name as customer_name "
@@ -720,6 +743,7 @@ def search_quotes(keyword="", date_from="", date_to="", customer_id=None):
     where = " AND ".join(conditions) if conditions else "1=1"
     sql = f"""
         SELECT q.id, q.quote_price, q.quote_quantity, q.quote_date, q.remark, q.paid, q.status, q.received_amount, q.sn_list,
+               q.tax_rate, q.purchase_tax_inclusive, q.quote_tax_inclusive,
                p.series, p.cpu, p.ram, p.storage, p.gpu, p.screen, p.note,
                b.purchase_price, b.remark as batch_remark, b.id as batch_id, b.sn_list as batch_sn_list,
                c.name as customer_name, c.id as customer_id,
@@ -1018,7 +1042,7 @@ def get_customer_quotes(customer_id):
     sql = """
         SELECT q.id, q.quote_price, q.quote_quantity, q.quote_date, q.remark, q.paid,
                p.series, p.cpu, p.ram, p.storage, p.gpu, p.screen, p.note,
-               b.purchase_price
+               b.purchase_price, q.tax_rate, q.purchase_tax_inclusive, q.quote_tax_inclusive
         FROM quotes q
         JOIN batches b ON q.batch_id = b.id
         JOIN products p ON b.product_id = p.id
@@ -1031,21 +1055,35 @@ def get_customer_quotes(customer_id):
 
 
 def get_customer_stats(customer_id):
-    """获取客户统计信息"""
+    """获取客户统计信息（含税后利润）"""
     conn = get_connection()
-    row = conn.execute(
+    rows = conn.execute(
         """
-        SELECT COUNT(*) as total_quotes, 
-               COALESCE(SUM(q.quote_price * q.quote_quantity), 0) as total_amount,
-               COALESCE(SUM((q.quote_price - b.purchase_price) * q.quote_quantity), 0) as total_profit
+        SELECT q.quote_price, q.quote_quantity, b.purchase_price,
+               q.tax_rate, q.purchase_tax_inclusive, q.quote_tax_inclusive
         FROM quotes q
         JOIN batches b ON q.batch_id = b.id
         WHERE q.customer_id = ? AND q.status != '已取消'
         """,
         (customer_id,),
-    ).fetchone()
+    ).fetchall()
     conn.close()
-    return dict(row) if row else {"total_quotes": 0, "total_amount": 0, "total_profit": 0}
+    total_quotes = len(rows)
+    total_amount = 0
+    total_profit = 0
+    for r in rows:
+        quote_price = r["quote_price"] or 0
+        quote_quantity = r["quote_quantity"] or 1
+        purchase_price = r["purchase_price"] or 0
+        tax_rate = r["tax_rate"]
+        purchase_tax_inclusive = r["purchase_tax_inclusive"] or 0
+        quote_tax_inclusive = r["quote_tax_inclusive"] or 0
+        total_amount += quote_price * quote_quantity
+        total_profit += calc_tax_adjusted_profit(
+            purchase_price, quote_price, quote_quantity, tax_rate,
+            purchase_tax_inclusive, quote_tax_inclusive,
+        )
+    return {"total_quotes": total_quotes, "total_amount": total_amount, "total_profit": total_profit}
 
 
 # ---------- 收付款记录管理（修改/删除） ----------
@@ -1246,3 +1284,22 @@ def delete_payment(payment_id):
         raise e
     finally:
         conn.close()
+
+
+# ---------- 价税覆盖层 ----------
+
+def calc_tax_adjusted_profit(purchase_price, quote_price, quantity, tax_rate, purchase_tax_inclusive, quote_tax_inclusive):
+    """计算税后利润，tax_rate 为 None 或 0 时返回原始利润"""
+    if tax_rate is None or tax_rate == 0:
+        return (quote_price - purchase_price) * quantity
+    purchase_excl = purchase_price / (1 + tax_rate) if purchase_tax_inclusive else purchase_price
+    quote_excl = quote_price / (1 + tax_rate) if quote_tax_inclusive else quote_price
+    return (quote_excl - purchase_excl) * quantity
+
+
+def get_customer_default_tax_rate(customer_id):
+    """获取客户的默认税率"""
+    conn = get_connection()
+    row = conn.execute("SELECT default_tax_rate FROM customers WHERE id=?", (customer_id,)).fetchone()
+    conn.close()
+    return row["default_tax_rate"] if row else None

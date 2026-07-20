@@ -10,7 +10,26 @@
 """
 
 from datetime import datetime, timedelta
-from src.models.database import get_connection
+from src.models.database import get_connection, calc_tax_adjusted_profit
+
+
+def _calc_sales_profit(rows):
+    """从查询结果集计算税后总销售额和总毛利"""
+    total_revenue = 0
+    total_profit = 0
+    for r in rows:
+        quote_price = r["quote_price"] or 0
+        quote_quantity = r["quote_quantity"] or 1
+        purchase_price = r["purchase_price"] or 0
+        tax_rate = r["tax_rate"]
+        purchase_tax_inclusive = r["purchase_tax_inclusive"] or 0
+        quote_tax_inclusive = r["quote_tax_inclusive"] or 0
+        total_revenue += quote_price * quote_quantity
+        total_profit += calc_tax_adjusted_profit(
+            purchase_price, quote_price, quote_quantity, tax_rate,
+            purchase_tax_inclusive, quote_tax_inclusive,
+        )
+    return total_revenue, total_profit
 
 
 def get_monthly_report(year=None, month=None):
@@ -47,29 +66,31 @@ def get_monthly_report(year=None, month=None):
     conn = get_connection()
 
     # === 本月销售数据 ===
-    sales = conn.execute("""
+    sales_rows = conn.execute("""
         SELECT 
-            COUNT(*) as order_count,
-            COALESCE(SUM(q.quote_price * q.quote_quantity), 0) as total_revenue,
-            COALESCE(SUM((q.quote_price - b.purchase_price) * q.quote_quantity), 0) as total_profit,
-            COALESCE(SUM(q.received_amount), 0) as total_received
+            q.quote_price, q.quote_quantity, b.purchase_price,
+            q.tax_rate, q.purchase_tax_inclusive, q.quote_tax_inclusive,
+            q.received_amount
         FROM quotes q
         JOIN batches b ON q.batch_id = b.id
         WHERE q.quote_date >= ? AND q.quote_date < ?
         AND q.status IN ('已报价', '已出库', '已收款')
-    """, (date_from, date_to)).fetchone()
+    """, (date_from, date_to)).fetchall()
+    total_revenue, total_profit = _calc_sales_profit(sales_rows)
+    total_received = sum(r["received_amount"] or 0 for r in sales_rows)
+    order_count = len(sales_rows)
 
     # === 上月销售数据（环比） ===
-    prev_sales = conn.execute("""
+    prev_rows = conn.execute("""
         SELECT 
-            COUNT(*) as order_count,
-            COALESCE(SUM(q.quote_price * q.quote_quantity), 0) as total_revenue,
-            COALESCE(SUM((q.quote_price - b.purchase_price) * q.quote_quantity), 0) as total_profit
+            q.quote_price, q.quote_quantity, b.purchase_price,
+            q.tax_rate, q.purchase_tax_inclusive, q.quote_tax_inclusive
         FROM quotes q
         JOIN batches b ON q.batch_id = b.id
         WHERE q.quote_date >= ? AND q.quote_date < ?
         AND q.status IN ('已报价', '已出库', '已收款')
-    """, (prev_from, prev_to)).fetchone()
+    """, (prev_from, prev_to)).fetchall()
+    prev_revenue, prev_profit = _calc_sales_profit(prev_rows)
 
     # === 最赚钱机型 TOP5 ===
     top_products = conn.execute("""
@@ -77,14 +98,17 @@ def get_monthly_report(year=None, month=None):
             p.series, p.cpu, p.ram, p.storage,
             COUNT(*) as sale_count,
             SUM(q.quote_price * q.quote_quantity) as revenue,
-            SUM((q.quote_price - b.purchase_price) * q.quote_quantity) as profit
+            q.quote_price, q.quote_quantity, b.purchase_price,
+            q.tax_rate, q.purchase_tax_inclusive, q.quote_tax_inclusive
         FROM quotes q
         JOIN batches b ON q.batch_id = b.id
         JOIN products p ON b.product_id = p.id
         WHERE q.quote_date >= ? AND q.quote_date < ?
         AND q.status IN ('已报价', '已出库', '已收款')
-        GROUP BY p.series, p.cpu, p.ram, p.storage
-        ORDER BY profit DESC
+        GROUP BY p.series, p.cpu, p.ram, p.storage,
+                 q.quote_price, q.quote_quantity, b.purchase_price,
+                 q.tax_rate, q.purchase_tax_inclusive, q.quote_tax_inclusive
+        ORDER BY revenue DESC
         LIMIT 5
     """, (date_from, date_to)).fetchall()
 
@@ -111,15 +135,33 @@ def get_monthly_report(year=None, month=None):
     """, (date_from, date_to)).fetchall()
 
     # === 回款率 ===
-    total_revenue = sales["total_revenue"] or 0
-    total_received = sales["total_received"] or 0
+    total_revenue = total_revenue or 0
+    total_received = total_received or 0
     collection_rate = (total_received / total_revenue * 100) if total_revenue > 0 else 0
 
     # === 环比计算 ===
-    prev_revenue = prev_sales["total_revenue"] or 0
-    prev_profit = prev_sales["total_profit"] or 0
+    prev_revenue = prev_revenue or 0
+    prev_profit = prev_profit or 0
     revenue_change = ((total_revenue - prev_revenue) / prev_revenue * 100) if prev_revenue > 0 else 0
-    profit_change = ((sales["total_profit"] - prev_profit) / prev_profit * 100) if prev_profit > 0 else 0
+    profit_change = ((total_profit - prev_profit) / prev_profit * 100) if prev_profit > 0 else 0
+
+    # 合并 TOP5 同类机型（按 series+cpu 聚合）
+    from collections import defaultdict
+    top_agg = defaultdict(lambda: {"sale_count": 0, "revenue": 0, "profit": 0})
+    for r in top_products:
+        key = (r["series"], r["cpu"] or "")
+        top_agg[key]["series"] = r["series"]
+        top_agg[key]["cpu"] = r["cpu"]
+        top_agg[key]["sale_count"] += r["sale_count"]
+        top_agg[key]["revenue"] += r["revenue"] or 0
+        qp = r["quote_price"] or 0
+        qq = r["quote_quantity"] or 1
+        pp = r["purchase_price"] or 0
+        tr = r["tax_rate"]
+        pi = r["purchase_tax_inclusive"] or 0
+        qi = r["quote_tax_inclusive"] or 0
+        top_agg[key]["profit"] += calc_tax_adjusted_profit(pp, qp, qq, tr, pi, qi)
+    sorted_top = sorted(top_agg.values(), key=lambda x: x["profit"], reverse=True)[:5]
 
     conn.close()
 
@@ -127,15 +169,15 @@ def get_monthly_report(year=None, month=None):
         "year": year,
         "month": month,
         "period": f"{year}年{month}月",
-        "order_count": sales["order_count"],
+        "order_count": order_count,
         "total_revenue": total_revenue,
-        "total_profit": sales["total_profit"] or 0,
+        "total_profit": total_profit,
         "total_received": total_received,
         "collection_rate": collection_rate,
-        "profit_margin": (sales["total_profit"] / total_revenue * 100) if total_revenue > 0 else 0,
+        "profit_margin": (total_profit / total_revenue * 100) if total_revenue > 0 else 0,
         "revenue_change": revenue_change,
         "profit_change": profit_change,
-        "top_products": [dict(r) for r in top_products],
+        "top_products": sorted_top,
         "slow_movers": [dict(r) for r in slow_movers],
     }
 

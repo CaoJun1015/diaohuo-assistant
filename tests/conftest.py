@@ -52,6 +52,7 @@ CREATE TABLE IF NOT EXISTS customers (
     qq TEXT,
     phone TEXT,
     note TEXT,
+    default_tax_rate REAL DEFAULT NULL,
     created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
 );
 
@@ -78,6 +79,9 @@ CREATE TABLE IF NOT EXISTS quotes (
     status TEXT DEFAULT '待确认',
     received_amount REAL DEFAULT 0,
     sn_list TEXT,
+    tax_rate REAL DEFAULT NULL,
+    purchase_tax_inclusive INTEGER DEFAULT 0,
+    quote_tax_inclusive INTEGER DEFAULT 0,
     created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
     FOREIGN KEY (batch_id) REFERENCES batches(id) ON DELETE CASCADE,
     FOREIGN KEY (customer_id) REFERENCES customers(id) ON DELETE CASCADE

@@ -8,6 +8,7 @@ from PyQt6.QtWidgets import (
     QTableWidget, QTableWidgetItem, QPushButton, QLabel,
     QComboBox, QLineEdit, QTextEdit, QSpinBox, QDateEdit,
     QDialogButtonBox, QMessageBox, QAbstractItemView, QHeaderView,
+    QCheckBox,
 )
 from PyQt6.QtCore import Qt, QDate
 from PyQt6.QtGui import QColor
@@ -24,6 +25,21 @@ from src.utils.shipment_flow import parse_sn_input, validate_sn_list, check_sn_d
 
 
 from src.ui.utils import _validate_date
+
+
+def _parse_tax_rate(combo):
+    """解析税率下拉框的值，支持预设选项和手动输入"""
+    data = combo.currentData()
+    if data is not None:
+        return data if data > 0 else None
+    text = combo.currentText().strip().replace("%", "").strip()
+    if not text:
+        return None
+    try:
+        val = float(text)
+        return val / 100.0 if val > 1 else val
+    except ValueError:
+        return None
 
 
 # ============================================================
@@ -624,18 +640,38 @@ class CustomerDialog(QDialog):
         self.phone_edit = QLineEdit()
         self.note_edit = QLineEdit()
 
+        self.tax_combo = QComboBox()
+        self.tax_combo.setEditable(True)
+        self.tax_combo.addItem("无", None)
+        self.tax_combo.addItem("8%", 0.08)
+        self.tax_combo.addItem("13%", 0.13)
+        self.tax_combo.setCurrentIndex(0)
+
         if customer:
             self.name_edit.setText(customer.get("name", ""))
             self.wechat_edit.setText(customer.get("wechat", ""))
             self.qq_edit.setText(customer.get("qq", ""))
             self.phone_edit.setText(customer.get("phone", ""))
             self.note_edit.setText(customer.get("note", ""))
+            tax_rate = customer.get("default_tax_rate")
+            if tax_rate is not None:
+                idx = self.tax_combo.findData(tax_rate)
+                if idx >= 0:
+                    self.tax_combo.setCurrentIndex(idx)
+                else:
+                    self.tax_combo.setEditText(f"{int(tax_rate * 100)}%")
 
         layout.addRow("名称:", self.name_edit)
         layout.addRow("微信:", self.wechat_edit)
         layout.addRow("QQ:", self.qq_edit)
         layout.addRow("电话:", self.phone_edit)
         layout.addRow("备注:", self.note_edit)
+
+        tax_layout = QHBoxLayout()
+        tax_layout.addWidget(QLabel("默认税率:"))
+        tax_layout.addWidget(self.tax_combo)
+        tax_layout.addStretch()
+        layout.addRow(tax_layout)
 
         buttons = QDialogButtonBox(QDialogButtonBox.StandardButton.Ok | QDialogButtonBox.StandardButton.Cancel)
         buttons.accepted.connect(self.accept)
@@ -649,6 +685,7 @@ class CustomerDialog(QDialog):
             "qq": self.qq_edit.text().strip(),
             "phone": self.phone_edit.text().strip(),
             "note": self.note_edit.text().strip(),
+            "default_tax_rate": _parse_tax_rate(self.tax_combo),
         }
 
 
@@ -694,6 +731,16 @@ class QuoteEditDialog(QDialog):
         self.paid_combo = QComboBox()
         self.paid_combo.addItems(["否", "是"])
 
+        # 价税覆盖层
+        self.tax_combo = QComboBox()
+        self.tax_combo.setEditable(True)
+        self.tax_combo.addItem("无", None)
+        self.tax_combo.addItem("8%", 0.08)
+        self.tax_combo.addItem("13%", 0.13)
+        self.tax_combo.setCurrentIndex(0)
+        self.purchase_tax_check = QCheckBox("进价含税")
+        self.quote_tax_check = QCheckBox("售价含税")
+
         if quote:
             self.price_spin.setValue(int(quote.get("quote_price", 0)))
             self.quantity_spin.setValue(quote.get("quote_quantity", 1))
@@ -707,6 +754,25 @@ class QuoteEditDialog(QDialog):
             idx = self.paid_combo.findText(paid_value)
             if idx >= 0:
                 self.paid_combo.setCurrentIndex(idx)
+            tax_rate = quote.get("tax_rate")
+            if tax_rate is not None:
+                idx = self.tax_combo.findData(tax_rate)
+                if idx >= 0:
+                    self.tax_combo.setCurrentIndex(idx)
+                else:
+                    self.tax_combo.setEditText(f"{int(tax_rate * 100)}%")
+            self.purchase_tax_check.setChecked(quote.get("purchase_tax_inclusive", 0) == 1)
+            self.quote_tax_check.setChecked(quote.get("quote_tax_inclusive", 0) == 1)
+        elif customer_id:
+            # 新建报价时自动带入客户默认税率
+            from src.models.database import get_customer_default_tax_rate
+            default_tax = get_customer_default_tax_rate(customer_id)
+            if default_tax is not None:
+                idx = self.tax_combo.findData(default_tax)
+                if idx >= 0:
+                    self.tax_combo.setCurrentIndex(idx)
+                else:
+                    self.tax_combo.setEditText(f"{int(default_tax * 100)}%")
 
         layout.addRow("对外报价:", self.price_spin)
         layout.addRow("数量:", self.quantity_spin)
@@ -715,6 +781,14 @@ class QuoteEditDialog(QDialog):
         layout.addRow("备注:", self.remark_edit)
         layout.addRow("序列号:", self.sn_edit)
         layout.addRow("是否打款:", self.paid_combo)
+
+        tax_layout = QHBoxLayout()
+        tax_layout.addWidget(QLabel("税率:"))
+        tax_layout.addWidget(self.tax_combo)
+        tax_layout.addWidget(self.purchase_tax_check)
+        tax_layout.addWidget(self.quote_tax_check)
+        tax_layout.addStretch()
+        layout.addRow(tax_layout)
 
         buttons = QDialogButtonBox(QDialogButtonBox.StandardButton.Ok | QDialogButtonBox.StandardButton.Cancel)
         buttons.accepted.connect(self._validate_and_accept)
@@ -748,6 +822,9 @@ class QuoteEditDialog(QDialog):
             "sn_list": self.sn_edit.text().strip(),
             "paid": self.paid_combo.currentText(),
             "batch_id": self.quote.get("batch_id") if self.quote else None,
+            "tax_rate": _parse_tax_rate(self.tax_combo),
+            "purchase_tax_inclusive": 1 if self.purchase_tax_check.isChecked() else 0,
+            "quote_tax_inclusive": 1 if self.quote_tax_check.isChecked() else 0,
         }
 
 

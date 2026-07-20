@@ -6,6 +6,7 @@ from PyQt6.QtWidgets import (
     QTableWidget, QTableWidgetItem, QPushButton, QLabel,
     QComboBox, QLineEdit, QSpinBox, QGroupBox,
     QMessageBox, QApplication, QAbstractItemView,
+    QCheckBox,
 )
 from PyQt6.QtCore import Qt
 
@@ -17,7 +18,7 @@ from src.models.database import (
 from src.utils.word_parser import parse_word_pricelist, preview_parse
 from src.utils.image_gen import generate_single_quote_card, generate_quote_image, WATERMARK_TEXT
 
-from src.ui.dialogs import BatchDialog, CustomerDialog, ProductEditDialog
+from src.ui.dialogs import BatchDialog, CustomerDialog, ProductEditDialog, _parse_tax_rate
 
 
 class QuotePanel(QWidget):
@@ -83,6 +84,7 @@ class QuotePanel(QWidget):
         self.customer_combo.setEditable(True)
         self.customer_combo.setPlaceholderText("输入客户名称或选择...")
         self.customer_combo.setMinimumWidth(150)
+        self.customer_combo.currentIndexChanged.connect(self._on_customer_changed)
 
         self.quote_remark_edit = QLineEdit()
         self.quote_remark_edit.setPlaceholderText("备注（选填）")
@@ -114,6 +116,24 @@ class QuotePanel(QWidget):
         glayout.addLayout(btn_row2, 3, 0, 1, 4)
 
         layout.addWidget(group)
+
+        # 价税覆盖层（独立行，右对齐）
+        tax_row = QHBoxLayout()
+        tax_row.addWidget(QLabel("税率:"))
+        self.tax_combo = QComboBox()
+        self.tax_combo.setEditable(True)
+        self.tax_combo.addItem("无", None)
+        self.tax_combo.addItem("8%", 0.08)
+        self.tax_combo.addItem("13%", 0.13)
+        self.tax_combo.setCurrentIndex(0)
+        tax_row.addWidget(self.tax_combo)
+        self.purchase_tax_check = QCheckBox("进价含税")
+        tax_row.addWidget(self.purchase_tax_check)
+        self.quote_tax_check = QCheckBox("售价含税")
+        tax_row.addWidget(self.quote_tax_check)
+        tax_row.addStretch()
+        layout.addLayout(tax_row)
+
         layout.addStretch()
 
     def load_product(self, product_id, series, cpu, ram, storage, gpu, screen, note):
@@ -165,6 +185,19 @@ class QuotePanel(QWidget):
         customers = get_all_customers()
         for c in customers:
             self.customer_combo.addItem(c["name"], c["id"])
+
+    def _on_customer_changed(self):
+        """客户切换时自动填充默认税率"""
+        customer_id = self.customer_combo.currentData()
+        if customer_id:
+            from src.models.database import get_customer_default_tax_rate
+            default_tax = get_customer_default_tax_rate(customer_id)
+            if default_tax is not None:
+                idx = self.tax_combo.findData(default_tax)
+                if idx >= 0:
+                    self.tax_combo.setCurrentIndex(idx)
+                else:
+                    self.tax_combo.setEditText(f"{int(default_tax * 100)}%")
 
     def on_add_batch(self):
         if not self.current_product_id:
@@ -325,7 +358,10 @@ class QuotePanel(QWidget):
 
         today = datetime.now().strftime("%Y-%m-%d")
         paid = self.quote_paid_combo.currentText()
-        add_quote(batch_id, customer_id, quote_price, quote_quantity, today, remark, paid)
+        tax_rate = _parse_tax_rate(self.tax_combo)
+        purchase_tax_inclusive = 1 if self.purchase_tax_check.isChecked() else 0
+        quote_tax_inclusive = 1 if self.quote_tax_check.isChecked() else 0
+        add_quote(batch_id, customer_id, quote_price, quote_quantity, today, remark, paid, tax_rate=tax_rate, purchase_tax_inclusive=purchase_tax_inclusive, quote_tax_inclusive=quote_tax_inclusive)
         
         return True, "报价已保存（待确认）"
 

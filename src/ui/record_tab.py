@@ -221,9 +221,28 @@ class RecordTab(QWidget):
         self.record_table.setColumnWidth(12, 70)
         self.record_table.setColumnWidth(13, 80)
         self.record_table.setColumnWidth(14, 120)
-        profit = total_sale - total_cost
+
+        # 税后利润统计
+        from src.models.database import calc_tax_adjusted_profit
+        tax_total_cost = 0
+        tax_total_sale = 0
+        total_tax_profit = 0
+        for q in quotes:
+            purchase_price = q.get("purchase_price", 0) or 0
+            quote_price = q.get("quote_price", 0) or 0
+            quantity = q.get("quote_quantity", 1) or 1
+            tax_rate = q.get("tax_rate")
+            purchase_tax_inclusive = q.get("purchase_tax_inclusive", 0) or 0
+            quote_tax_inclusive = q.get("quote_tax_inclusive", 0) or 0
+            tax_total_cost += purchase_price * quantity
+            tax_total_sale += quote_price * quantity
+            total_tax_profit += calc_tax_adjusted_profit(
+                purchase_price, quote_price, quantity, tax_rate,
+                purchase_tax_inclusive, quote_tax_inclusive,
+            )
+        profit = total_tax_profit
         self.stats_label.setText(
-            f"共 {len(quotes)} 条记录  |  总购入: ¥{total_cost:.0f}  |  总报价: ¥{total_sale:.0f}  |  毛利: ¥{profit:.0f}"
+            f"共 {len(quotes)} 条记录  |  总购入: ¥{tax_total_cost:.0f}  |  总报价: ¥{tax_total_sale:.0f}  |  毛利: ¥{profit:.0f}"
         )
 
     def on_edit_quote(self):
@@ -250,6 +269,9 @@ class RecordTab(QWidget):
                     data["remark"],
                     data["paid"],
                     data.get("sn_list", ""),
+                    tax_rate=data.get("tax_rate"),
+                    purchase_tax_inclusive=data.get("purchase_tax_inclusive", 0),
+                    quote_tax_inclusive=data.get("quote_tax_inclusive", 0),
                 )
                 self.refresh_records()
 

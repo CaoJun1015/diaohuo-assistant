@@ -122,7 +122,11 @@ class CustomerTab(QWidget):
             purchase_price = q.get("purchase_price", 0) or 0
             quote_price = q.get("quote_price", 0) or 0
             quantity = q.get("quote_quantity", 1) or 1
-            profit = (quote_price - purchase_price) * quantity
+            from src.models.database import calc_tax_adjusted_profit
+            profit = calc_tax_adjusted_profit(
+                purchase_price, quote_price, quantity,
+                q.get("tax_rate"), q.get("purchase_tax_inclusive", 0) or 0, q.get("quote_tax_inclusive", 0) or 0,
+            )
             
             self.customer_history_table.setItem(i, 0, QTableWidgetItem(q.get("quote_date", "")))
             self.customer_history_table.setItem(i, 1, QTableWidgetItem(q.get("series", "")))
@@ -140,13 +144,18 @@ class CustomerTab(QWidget):
         if row < 0:
             return
         cid = int(self.customer_table.item(row, 0).text())
+        from src.models.database import get_connection
+        conn = get_connection()
+        row_data = conn.execute("SELECT name, wechat, qq, phone, note, default_tax_rate FROM customers WHERE id=?", (cid,)).fetchone()
         current = {
-            "name": self.customer_table.item(row, 1).text(),
-            "wechat": self.customer_table.item(row, 2).text() if self.customer_table.item(row, 2) else "",
-            "qq": self.customer_table.item(row, 3).text() if self.customer_table.item(row, 3) else "",
-            "phone": self.customer_table.item(row, 4).text() if self.customer_table.item(row, 4) else "",
-            "note": "",
+            "name": row_data["name"] or "",
+            "wechat": row_data["wechat"] or "",
+            "qq": row_data["qq"] or "",
+            "phone": row_data["phone"] or "",
+            "note": row_data["note"] or "",
+            "default_tax_rate": row_data["default_tax_rate"],
         }
+        conn.close()
         dlg = CustomerDialog(self, current)
         if dlg.exec():
             data = dlg.get_data()
@@ -155,8 +164,8 @@ class CustomerTab(QWidget):
             from src.models.database import get_connection
             conn = get_connection()
             conn.execute(
-                "UPDATE customers SET name=?, wechat=?, qq=?, phone=?, note=? WHERE id=?",
-                (data["name"], data["wechat"], data["qq"], data["phone"], data["note"], cid),
+                "UPDATE customers SET name=?, wechat=?, qq=?, phone=?, note=?, default_tax_rate=? WHERE id=?",
+                (data["name"], data["wechat"], data["qq"], data["phone"], data["note"], data.get("default_tax_rate"), cid),
             )
             conn.commit()
             conn.close()
